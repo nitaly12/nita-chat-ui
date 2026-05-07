@@ -62,7 +62,11 @@ export default function ChatSidebar({
     0
   );
   return (
-    <aside className="flex h-full w-[340px] flex-col border-r border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
+    <aside
+      className={`h-full w-full flex-col border-r border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 md:w-[340px] md:flex ${
+        activeRoomId ? "hidden" : "flex"
+      }`}
+    >
       <div className="border-b border-slate-200 p-5 dark:border-slate-700">
         <div className="flex items-center justify-between">
           <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Message</h1>

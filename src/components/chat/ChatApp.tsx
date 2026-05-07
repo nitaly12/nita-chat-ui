@@ -52,6 +52,7 @@ export default function ChatApp() {
   const [usernameInput, setUsernameInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
+  const [statusTone, setStatusTone] = useState<"error" | "success">("error");
   const [chatNotice, setChatNotice] = useState("");
   const [extraUnreadByRoom, setExtraUnreadByRoom] = useState<Record<string, number>>({});
   const lastPreviewRef = useRef<Record<string, string>>({});
@@ -86,6 +87,7 @@ export default function ChatApp() {
     lastPreviewRef.current = {};
     chatsHydratedRef.current = false;
     setChatNotice("");
+    setStatusTone("error");
     setStatusMessage(message);
     setProfileAvatarUrl(null);
     setProfileDisplayName(null);
@@ -101,7 +103,10 @@ export default function ChatApp() {
         }
       }
       if (token) setChatNotice(fallbackMessage);
-      else setStatusMessage(fallbackMessage);
+      else {
+        setStatusTone("error");
+        setStatusMessage(fallbackMessage);
+      }
     },
     [forceLogout, token]
   );
@@ -443,11 +448,13 @@ export default function ChatApp() {
       if (authMode === "register") {
         await chatApi.register(usernameInput.trim(), passwordInput.trim());
         setAuthMode("login");
+        setStatusTone("success");
         setStatusMessage("Registered. Please login.");
         return;
       }
       const auth = await chatApi.login(usernameInput.trim(), passwordInput.trim());
       if (!auth.token) {
+        setStatusTone("error");
         setStatusMessage("Login failed: missing token.");
         return;
       }
@@ -460,6 +467,7 @@ export default function ChatApp() {
       setPasswordInput("");
       await loadAppData();
     } catch {
+      setStatusTone("error");
       setStatusMessage("Authentication failed.");
     }
   };
@@ -485,7 +493,15 @@ export default function ChatApp() {
               value={passwordInput}
               onChange={(e) => setPasswordInput(e.target.value)}
             />
-            {statusMessage && <p className="text-sm text-red-600">{statusMessage}</p>}
+            {statusMessage && (
+              <p
+                className={`text-sm ${
+                  statusTone === "success" ? "text-emerald-600" : "text-red-600"
+                }`}
+              >
+                {statusMessage}
+              </p>
+            )}
             <button
               className="w-full rounded-lg bg-blue-600 px-3 py-2 text-white hover:bg-blue-700"
               type="button"
@@ -509,7 +525,7 @@ export default function ChatApp() {
   }
 
   return (
-    <div className="h-screen bg-slate-100 p-3 dark:bg-slate-950">
+    <div className="h-screen bg-slate-100 p-0 dark:bg-slate-950 sm:p-3">
       <TopAlert
         key={topAlert?.id ?? "top-alert-empty"}
         open={Boolean(topAlert)}
@@ -524,15 +540,15 @@ export default function ChatApp() {
           setTopAlert(null);
         }}
       />
-      <div className="mx-auto flex h-full max-w-[1400px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900">
-        <header className="relative flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 py-3 dark:border-slate-700 dark:bg-slate-900/80">
+      <div className="mx-auto flex h-full max-w-[1400px] flex-col overflow-hidden border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:rounded-2xl">
+        <header className="relative flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-3 dark:border-slate-700 dark:bg-slate-900/80 sm:gap-4 sm:px-5">
           {chatDebugOn ? (
             <div className="absolute left-1/2 top-2 z-50 -translate-x-1/2 rounded-full border border-amber-400 bg-amber-100 px-3 py-1 text-[10px] font-semibold text-amber-950 shadow dark:border-amber-500 dark:bg-amber-950/90 dark:text-amber-100">
               CHAT_DEBUG — see DevTools console + voice bubble panels
             </div>
           ) : null}
           <div className="flex min-w-0 flex-1 items-center gap-3">
-            <div className="relative w-full max-w-md">
+            <div className="relative hidden w-full max-w-md sm:block">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
                 🔎
               </span>
@@ -558,14 +574,14 @@ export default function ChatApp() {
             </Link>
             <button
               type="button"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm dark:border-slate-600 dark:bg-slate-800"
+              className="hidden h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm dark:border-slate-600 dark:bg-slate-800 sm:inline-flex"
               title="Messages"
             >
               💬
             </button>
             <button
               type="button"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm dark:border-slate-600 dark:bg-slate-800"
+              className="hidden h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm dark:border-slate-600 dark:bg-slate-800 sm:inline-flex"
               title="Notifications"
             >
               🔔
@@ -638,6 +654,7 @@ export default function ChatApp() {
           notice={chatNotice}
           onDismissNotice={() => setChatNotice("")}
           onMarkRead={markRoomAsRead}
+          onClose={() => setActiveRoomId("")}
           onSend={async (content) => {
             if (!activeRoomId) return;
             const optimistic: ChatMessage = {

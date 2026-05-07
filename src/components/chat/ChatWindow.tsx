@@ -34,6 +34,8 @@ type ChatWindowProps = {
   onSendVoice: (blob: Blob, durationSec: number) => Promise<void>;
   onInvite: (userId: string) => Promise<void>;
   onRemoveMember?: (userId: string) => Promise<void>;
+  /** Mobile-only: dismiss the open chat and return to the sidebar. */
+  onClose?: () => void;
 };
 
 export default function ChatWindow({
@@ -55,6 +57,7 @@ export default function ChatWindow({
   onSendVoice,
   onInvite,
   onRemoveMember,
+  onClose,
 }: ChatWindowProps) {
   const [draft, setDraft] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
@@ -137,7 +140,7 @@ export default function ChatWindow({
 
   if (!activeChat) {
     return (
-      <main className="flex flex-1 items-center justify-center bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+      <main className="hidden flex-1 items-center justify-center bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-400 md:flex">
         Select or start a conversation
       </main>
     );
@@ -171,6 +174,16 @@ export default function ChatWindow({
         ) : null}
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-3">
+            {onClose ? (
+              <button
+                type="button"
+                onClick={onClose}
+                aria-label="Back to chats"
+                className="-ml-2 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 md:hidden"
+              >
+                <span aria-hidden className="text-xl leading-none">←</span>
+              </button>
+            ) : null}
             <div className="relative shrink-0">
               <div
                 className={`inline-flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-200/80 text-base font-semibold dark:border-slate-600 ${
