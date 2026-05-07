@@ -1,10 +1,11 @@
 import axios from "axios";
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_BASE_URL =
+const BACKEND_BASE_URL = (
   process.env.BACKEND_BASE_URL ??
   process.env.NEXT_PUBLIC_SOCKET_URL ??
-  "http://localhost:8080";
+  "http://localhost:8080"
+).replace(/\/+$/, "");
 
 const extractToken = (
   data: unknown,

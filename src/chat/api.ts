@@ -26,8 +26,9 @@ export function readAxiosErrorMessage(err: unknown): string | null {
   return null;
 }
 
-const RESOLVED_BACKEND_ORIGIN =
-  process.env.NEXT_PUBLIC_SOCKET_URL?.trim() || "http://localhost:8080";
+const RESOLVED_BACKEND_ORIGIN = (
+  process.env.NEXT_PUBLIC_SOCKET_URL?.trim() || "http://localhost:8080"
+).replace(/\/+$/, "");
 
 export const backendApi = axios.create({
   baseURL: RESOLVED_BACKEND_ORIGIN,
