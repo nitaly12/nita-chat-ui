@@ -1,7 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  avatarTone,
+  directPeerRef,
+  pickUserSummary,
+  resolveChatAvatarUrl,
+  resolveChatName,
+  resolveOtherOnline,
+} from "../../chat/chatPeerProfile";
 import type { Chat, ChatMessage, UserSummary } from "../../chat/types";
+import { useVoiceRecorder } from "../../hooks/useVoiceRecorder";
 import MessageBubble from "./MessageBubble";
 
 type ChatWindowProps = {
@@ -21,6 +31,7 @@ type ChatWindowProps = {
   onDelete: (messageId: string) => Promise<void>;
   onReact: (messageId: string, emoji: string) => Promise<void>;
   onSendMedia: (file: File) => Promise<void>;
+  onSendVoice: (blob: Blob, durationSec: number) => Promise<void>;
   onInvite: (userId: string) => Promise<void>;
   onRemoveMember?: (userId: string) => Promise<void>;
 };
@@ -41,6 +52,7 @@ export default function ChatWindow({
   onDelete,
   onReact,
   onSendMedia,
+  onSendVoice,
   onInvite,
   onRemoveMember,
 }: ChatWindowProps) {
@@ -48,7 +60,6 @@ export default function ChatWindow({
   const [searchTerm, setSearchTerm] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [profileOpen, setProfileOpen] = useState(false);
   const [nickname, setNickname] = useState("");
   const [nicknameDraft, setNicknameDraft] = useState("");
   const [theme, setTheme] = useState<"default" | "warm" | "dark">("default");
@@ -56,6 +67,14 @@ export default function ChatWindow({
   const [membersOpen, setMembersOpen] = useState(true);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const typingThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const voice = useVoiceRecorder();
+  const recordingActive = voice.uiState !== "idle";
+
+  const formatRecSec = (sec: number): string => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -99,62 +118,45 @@ export default function ChatWindow({
       ? "bg-slate-900 text-slate-100"
       : theme === "warm"
         ? "bg-amber-50 text-slate-900"
-        : "bg-white";
+        : "bg-white dark:bg-slate-900 dark:text-slate-100";
   const sectionClass =
     theme === "dark"
       ? "bg-slate-800/80"
       : theme === "warm"
         ? "bg-amber-50/60"
-        : "bg-slate-50/50";
+        : "bg-slate-50/50 dark:bg-slate-950/80 dark:text-slate-100";
+
+  const peerProfileHref = useMemo(() => {
+    if (!activeChat || activeChat.isGroup) return null;
+    const peer = directPeerRef(activeChat, currentUsername);
+    const row = pickUserSummary(users, peer);
+    const uname = row?.username?.trim() || peer?.username?.trim();
+    if (!uname) return null;
+    return `/users/${encodeURIComponent(uname)}`;
+  }, [activeChat, currentUsername, users]);
 
   if (!activeChat) {
     return (
-      <main className="flex flex-1 items-center justify-center bg-slate-100 text-slate-500">
+      <main className="flex flex-1 items-center justify-center bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-400">
         Select or start a conversation
       </main>
     );
   }
 
   const members = activeChat.members ?? [];
-  const resolvedChatTitle = (() => {
-    if (activeChat.isGroup) return activeChat.groupName || "Group";
-    const other = members.find((m) => {
-      const uname = m.username ?? m.name;
-      if (!uname) return false;
-      if (!currentUsername) return true;
-      return uname !== currentUsername;
-    });
-    return (
-      other?.username ??
-      other?.name ??
-      activeChat.directName ??
-      activeChat.groupName ??
-      `Chat #${activeChat.id}`
-    );
-  })();
+  const resolvedChatTitle = resolveChatName(activeChat, currentUsername, users);
   const effectiveTitle = nickname.trim().length > 0 ? nickname.trim() : resolvedChatTitle;
-  const resolvedPrivateStatus = (() => {
-    if (activeChat.isGroup) return `${members.length} members`;
-    const other = members.find((m) => {
-      const uname = m.username ?? m.name;
-      if (!uname) return false;
-      if (!currentUsername) return true;
-      return uname !== currentUsername;
-    });
-    const memberOnline = other?.online ?? other?.isOnline;
-    if (typeof memberOnline === "boolean") return memberOnline ? "Online" : "Offline";
-    const keyUsername = other?.username ?? other?.name;
-    const keyId = other?.id;
-    const fromUsers = users.find(
-      (u) => (keyId && u.id === keyId) || (keyUsername && u.username === keyUsername)
-    );
-    if (typeof fromUsers?.online === "boolean") return fromUsers.online ? "Online" : "Offline";
-    return "Offline";
-  })();
+  const headerAvatarUrl = resolveChatAvatarUrl(activeChat, currentUsername, users);
+  const headerInitials = effectiveTitle.slice(0, 1).toUpperCase();
+  const resolvedPrivateStatus = activeChat.isGroup
+    ? `${members.length} members`
+    : resolveOtherOnline(activeChat, currentUsername, users)
+      ? "Online"
+      : "Offline";
 
   return (
     <main className={`flex flex-1 flex-col ${themeClass}`}>
-      <header className="border-b border-slate-200 bg-white px-6 py-4">
+      <header className="border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-700 dark:bg-slate-900">
         {notice ? (
           <div className="mb-3 flex items-start justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             <span className="min-w-0 flex-1">{notice}</span>
@@ -168,29 +170,63 @@ export default function ChatWindow({
           </div>
         ) : null}
         <div className="flex items-center justify-between gap-3">
-          <div className="min-w-0">
-            <h2 className="truncate text-xl font-semibold text-slate-900">{effectiveTitle}</h2>
-            <p className="mt-0.5 text-sm text-slate-500">
-              {typingLabel ?? resolvedPrivateStatus}
-            </p>
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="relative shrink-0">
+              <div
+                className={`inline-flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-200/80 text-base font-semibold dark:border-slate-600 ${
+                  headerAvatarUrl
+                    ? "bg-slate-100 dark:bg-slate-800"
+                    : `text-slate-800 dark:text-slate-900 ${avatarTone(effectiveTitle)}`
+                }`}
+              >
+                {headerAvatarUrl ? (
+                  <img
+                    src={headerAvatarUrl}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    loading="eager"
+                    decoding="async"
+                  />
+                ) : (
+                  headerInitials
+                )}
+              </div>
+              {!activeChat.isGroup ? (
+                <span
+                  className={`absolute bottom-0 right-0 inline-block h-2.5 w-2.5 rounded-full border border-white dark:border-slate-900 ${
+                    resolveOtherOnline(activeChat, currentUsername, users)
+                      ? "bg-green-500"
+                      : "bg-slate-300"
+                  }`}
+                />
+              ) : null}
+            </div>
+            <div className="min-w-0">
+              <h2 className="truncate text-xl font-semibold text-slate-900 dark:text-slate-100">
+                {effectiveTitle}
+              </h2>
+              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">
+                {typingLabel ?? resolvedPrivateStatus}
+              </p>
+            </div>
           </div>
           <div className="relative flex items-center gap-2">
-            <button className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-sm">
+            <button className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-sm dark:border-slate-600 dark:text-slate-200">
               📞
             </button>
-            <button className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-sm">
+            <button className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-sm dark:border-slate-600 dark:text-slate-200">
               🎥
             </button>
             {searchOpen && (
               <input
-                className="h-9 w-64 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs outline-none focus:border-blue-500"
+                className="h-9 w-64 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs text-slate-900 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
                 placeholder="Search messages in this room..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             )}
             <button
-              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-sm"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 text-sm dark:border-slate-600 dark:text-slate-200"
               type="button"
               onClick={() => setMenuOpen((v) => !v)}
               title="Search messages"
@@ -198,10 +234,10 @@ export default function ChatWindow({
               ⋯
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-11 z-20 w-72 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+              <div className="absolute right-0 top-11 z-20 w-72 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-600 dark:bg-slate-800">
                 <button
                   type="button"
-                  className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"
+                  className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
                   onClick={() => {
                     setSearchOpen((v) => !v);
                     setMenuOpen(false);
@@ -209,17 +245,21 @@ export default function ChatWindow({
                 >
                   {searchOpen ? "Hide search" : "Search messages"}
                 </button>
-                <button
-                  type="button"
-                  className="w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100"
-                  onClick={() => {
-                    setProfileOpen((v) => !v);
-                    setMenuOpen(false);
-                  }}
-                >
-                  {profileOpen ? "Hide profile" : "View profile"}
-                </button>
-                <div className="my-2 border-t border-slate-100" />
+                {peerProfileHref ? (
+                  <Link
+                    href={peerProfileHref}
+                    className="block w-full rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+                    onClick={() => setMenuOpen(false)}
+                  >
+                    View profile
+                  </Link>
+                ) : (
+                  <p className="rounded-xl px-3 py-2 text-left text-xs text-slate-400 dark:text-slate-500">
+                    Profile link is available in direct chats when the other person has a
+                    username.
+                  </p>
+                )}
+                <div className="my-2 border-t border-slate-100 dark:border-slate-600" />
                 <div className="px-1 pb-1">
                   <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                     Change nickname
@@ -243,7 +283,7 @@ export default function ChatWindow({
                     </button>
                   </div>
                 </div>
-                <div className="my-2 border-t border-slate-100" />
+                <div className="my-2 border-t border-slate-100 dark:border-slate-600" />
                 <div className="px-1 pb-1">
                   <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                     Chat theme
@@ -297,19 +337,6 @@ export default function ChatWindow({
             )}
           </div>
         </div>
-        {profileOpen && (
-          <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
-            <p>
-              <span className="font-semibold">Name:</span> {resolvedChatTitle}
-            </p>
-            <p>
-              <span className="font-semibold">Room ID:</span> {activeChat.id}
-            </p>
-            <p>
-              <span className="font-semibold">Status:</span> {resolvedPrivateStatus}
-            </p>
-          </div>
-        )}
         {activeChat.isGroup && (
           <div className="mt-3 space-y-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -333,7 +360,7 @@ export default function ChatWindow({
               </button>
             </div>
 
-            <div className="rounded-lg border border-slate-200 bg-slate-50">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 dark:border-slate-600 dark:bg-slate-800/80">
               <button
                 type="button"
                 className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-600"
@@ -404,6 +431,8 @@ export default function ChatWindow({
               message={message}
               isMine={Boolean(isMine)}
               displaySender={senderLabel}
+              currentUserId={currentUserId}
+              currentUsername={currentUsername}
               onEdit={onEdit}
               onDelete={onDelete}
               onReact={onReact}
@@ -413,51 +442,127 @@ export default function ChatWindow({
         <div ref={bottomRef} />
       </section>
 
-      <footer className="border-t border-slate-200 bg-white p-4">
-        <form
-          className="flex items-center gap-2 rounded-2xl border border-blue-300 bg-white p-2 shadow-sm"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const content = draft.trim();
-            if (!content) return;
-            setDraft("");
-            await onSend(content);
-          }}
-        >
-          <label className="inline-flex cursor-pointer items-center rounded-xl bg-slate-100 px-3 py-3 text-xs text-slate-700 hover:bg-slate-200">
-            📎
-            <input
-              type="file"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                void onSendMedia(file);
-                e.currentTarget.value = "";
-              }}
-            />
-          </label>
-          <input
-            className="flex-1 rounded-xl border border-transparent bg-transparent px-2 py-2 text-sm outline-none"
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              if (!typingThrottleRef.current) {
-                onTypingActivity();
-                typingThrottleRef.current = setTimeout(() => {
-                  typingThrottleRef.current = null;
-                }, 900);
-              }
-            }}
-            placeholder="Type a message..."
-          />
+      <footer className="border-t border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+        <div className="flex items-stretch gap-2">
           <button
-            className="rounded-xl bg-gradient-to-b from-blue-500 to-blue-700 px-5 py-2.5 text-sm font-semibold text-white shadow hover:from-blue-600 hover:to-blue-700"
-            type="submit"
+            type="button"
+            title="Hold to record voice"
+            className="inline-flex shrink-0 cursor-pointer select-none items-center self-end rounded-xl bg-slate-100 px-3 py-3 text-sm text-slate-700 hover:bg-slate-200 active:bg-slate-300"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              (e.currentTarget as HTMLButtonElement).setPointerCapture(e.pointerId);
+              void voice.startRecording(e.clientX);
+            }}
+            onPointerMove={(e) => {
+              if (voice.uiState === "recording") voice.onPointerMove(e.clientX);
+            }}
+            onPointerUp={(e) => {
+              const el = e.currentTarget as HTMLButtonElement;
+              if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+              const phase = voice.getPhase();
+              if (phase === "idle") return;
+              if (phase === "requesting") {
+                voice.cancelPendingStart();
+                return;
+              }
+              const cancelled = voice.getSlideToCancel();
+              void (async () => {
+                const result = await voice.stopRecording(cancelled);
+                if (result && !cancelled) await onSendVoice(result.blob, result.durationSec);
+              })();
+            }}
+            onPointerCancel={(e) => {
+              const el = e.currentTarget as HTMLButtonElement;
+              if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId);
+              const phase = voice.getPhase();
+              if (phase === "requesting") voice.cancelPendingStart();
+              else if (phase === "recording") void voice.stopRecording(true);
+            }}
           >
-            Send
+            🎤
           </button>
-        </form>
+
+          <div className="min-w-0 flex-1">
+            {recordingActive ? (
+              <div
+                className={`flex h-full min-h-[52px] items-center gap-3 rounded-2xl border px-4 py-3 shadow-sm ${
+                  voice.slideToCancel
+                    ? "border-red-300 bg-red-50"
+                    : "border-amber-200 bg-amber-50/80"
+                }`}
+              >
+                <span className="relative flex h-3 w-3 shrink-0">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-60" />
+                  <span className="relative inline-flex h-3 w-3 rounded-full bg-red-500" />
+                </span>
+                <span className="font-mono text-lg font-semibold tabular-nums text-slate-800">
+                  {voice.uiState === "requesting" ? "…" : formatRecSec(voice.elapsedSec)}
+                </span>
+                <p className="min-w-0 flex-1 text-center text-sm text-slate-700">
+                  {voice.uiState === "requesting"
+                    ? "Allow microphone access…"
+                    : voice.slideToCancel
+                      ? "Release to cancel"
+                      : "Release to send · slide left to cancel"}
+                </p>
+                <div className="hidden h-8 shrink-0 items-end gap-0.5 sm:flex">
+                  {Array.from({ length: 8 }).map((_, i) => (
+                    <span
+                      key={i}
+                      className="w-1 rounded-full bg-red-400/80 animate-pulse"
+                      style={{ height: `${6 + (i % 4) * 4}px`, animationDelay: `${i * 80}ms` }}
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <form
+                className="flex items-center gap-2 rounded-2xl border border-blue-300 bg-white p-2 shadow-sm"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const content = draft.trim();
+                  if (!content) return;
+                  setDraft("");
+                  await onSend(content);
+                }}
+              >
+                <label className="inline-flex cursor-pointer items-center rounded-xl bg-slate-100 px-3 py-3 text-xs text-slate-700 hover:bg-slate-200">
+                  📎
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      void onSendMedia(file);
+                      e.currentTarget.value = "";
+                    }}
+                  />
+                </label>
+                <input
+                  className="flex-1 rounded-xl border border-transparent bg-transparent px-2 py-2 text-sm outline-none"
+                  value={draft}
+                  onChange={(e) => {
+                    setDraft(e.target.value);
+                    if (!typingThrottleRef.current) {
+                      onTypingActivity();
+                      typingThrottleRef.current = setTimeout(() => {
+                        typingThrottleRef.current = null;
+                      }, 900);
+                    }
+                  }}
+                  placeholder="Type a message…"
+                />
+                <button
+                  className="rounded-xl bg-gradient-to-b from-blue-500 to-blue-700 px-5 py-2.5 text-sm font-semibold text-white shadow hover:from-blue-600 hover:to-blue-700"
+                  type="submit"
+                >
+                  Send
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
       </footer>
     </main>
   );

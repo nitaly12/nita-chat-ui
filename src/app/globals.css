@@ -1,8 +1,25 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  /* Comment / thread surfaces (alias for professional layouts) */
+  --bg-main: #ffffff;
+  --text-main: #1e293b;
+  /* Feed / profile composer (light) — align with messenger cards */
+  --feed-surface: #ffffff;
+  --feed-muted: #f8fafc;
+  --feed-border: #e2e8f0;
+  --feed-placeholder: #64748b;
+  /* “Own message” bubble (same role as blue bubbles in chat) */
+  --feed-bubble-bg: #2563eb;
+  --feed-bubble-fg: #ffffff;
+  --feed-bubble-meta: rgba(255, 255, 255, 0.72);
+  /* Post interaction bar (Facebook-style neutrals; dark values match spec) */
+  --post-bar-text: #65676b;
+  --post-bar-hover: #f2f3f5;
 }
 
 @theme inline {
@@ -13,10 +30,29 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.light) {
     --background: #0a0a0a;
     --foreground: #ededed;
+    --bg-main: #0f172a;
+    --text-main: #e2e8f0;
   }
+}
+
+/* API-driven theme via `applyDocumentLightDark` (see `profileTheme.ts`) */
+html.dark {
+  --background: #020617;
+  --foreground: #f1f5f9;
+  --bg-main: #0f172a;
+  --text-main: #e2e8f0;
+  --feed-surface: #0f172a;
+  --feed-muted: #1e293b;
+  --feed-border: rgba(148, 163, 184, 0.28);
+  --feed-placeholder: #94a3b8;
+  --feed-bubble-bg: #1d4ed8;
+  --feed-bubble-fg: #f8fafc;
+  --feed-bubble-meta: rgba(248, 250, 252, 0.65);
+  --post-bar-text: #e4e6eb;
+  --post-bar-hover: #3a3b3c;
 }
 
 body {

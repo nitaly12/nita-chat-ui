@@ -1,12 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { CHAT_BACKEND_ORIGIN } from "../../chat/api";
+import { isChatDebug } from "../../chat/chatDebug";
 import type { ChatMessage } from "../../chat/types";
+import VoiceMessagePlayer from "./VoiceMessagePlayer";
+
+function toPlayableAudioUrl(raw: string): string {
+  const u = raw.trim();
+  /** Same-origin object URLs from the recorder / optimistic UI — never prefix the backend. */
+  if (u.startsWith("blob:")) return u;
+  if (/^https?:\/\//i.test(u)) return u;
+  if (u.startsWith("//")) return `http:${u}`;
+  if (u.startsWith("/")) return `${CHAT_BACKEND_ORIGIN}${u}`;
+  return `${CHAT_BACKEND_ORIGIN}/${u}`;
+}
 
 type MessageBubbleProps = {
   message: ChatMessage;
   isMine: boolean;
   displaySender: string;
+  currentUserId?: string | null;
+  currentUsername?: string | null;
   onEdit: (messageId: string, content: string) => Promise<void>;
   onDelete: (messageId: string) => Promise<void>;
   onReact: (messageId: string, emoji: string) => Promise<void>;
@@ -15,18 +30,139 @@ type MessageBubbleProps = {
 const formatShortTime = (iso: string): string =>
   new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-const deliveryStatus = (message: ChatMessage): string => {
-  if (message.pending) return "Sending…";
-  if (message.readAt || message.seen || (message.readBy && message.readBy.length > 0)) {
-    return "Read";
+/** Hide voice metadata JSON if the server still stores it in `content`. */
+function isVoiceJsonContent(text: string): boolean {
+  const t = text.trim();
+  if (!t.startsWith("{")) return false;
+  try {
+    const j = JSON.parse(t) as Record<string, unknown>;
+    const typ = String(j.type ?? j.messageType ?? j.message_type ?? "").toLowerCase();
+    if (typ !== "voice") return false;
+    const keys = [j.audioUrl, j.audio_url, j.url, j.mediaUrl, j.fileUrl, j.attachmentUrl, j.path];
+    return keys.some((k) => typeof k === "string" && k.trim().length > 0);
+  } catch {
+    return false;
   }
-  return "Delivered";
-};
+}
+
+/** Fallback when `mediaUrl` was not mapped but `content` still holds voice JSON. */
+function extractVoiceUrlFromContent(text: string): string | undefined {
+  const t = text.trim();
+  if (!t.startsWith("{")) return undefined;
+  try {
+    const j = JSON.parse(t) as Record<string, unknown>;
+    const typ = String(j.type ?? j.messageType ?? j.message_type ?? "").toLowerCase();
+    if (typ !== "voice") return undefined;
+    const keys = [
+      j.audioUrl,
+      j.audio_url,
+      j.url,
+      j.mediaUrl,
+      j.media_url,
+      j.fileUrl,
+      j.attachmentUrl,
+      j.path,
+      j.location,
+      j.filePath,
+    ];
+    for (const k of keys) {
+      if (typeof k === "string" && k.trim().length > 0) return k.trim();
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
+type ReceiptPhase = "uploading" | "sending" | "sent" | "delivered" | "seen";
+
+function seenBySomeoneElse(
+  message: ChatMessage,
+  currentUserId: string | null | undefined,
+  currentUsername: string | null | undefined
+): boolean {
+  /** Blue "seen" only when at least one recipient id/username is present and is not the sender. */
+  const combined = [...(message.seenBy ?? []), ...(message.readBy ?? [])];
+  if (combined.length === 0) return false;
+  const isMe = (t: string): boolean => {
+    const s = String(t).trim();
+    if (!s) return false;
+    if (currentUserId != null && String(currentUserId) === s) return true;
+    if (
+      currentUsername != null &&
+      currentUsername.trim().toLowerCase() === s.toLowerCase()
+    )
+      return true;
+    return false;
+  };
+  return combined.some((t) => !isMe(String(t)));
+}
+
+function getReceiptPhase(
+  message: ChatMessage,
+  isMine: boolean,
+  currentUserId: string | null | undefined,
+  currentUsername: string | null | undefined
+): ReceiptPhase | null {
+  if (!isMine) return null;
+  if (message.pending && message.voiceDeliveryPhase === "uploading") return "uploading";
+  if (message.pending && message.voiceDeliveryPhase === "sending") return "sending";
+  if (message.pending) return "sent";
+  if (seenBySomeoneElse(message, currentUserId, currentUsername)) return "seen";
+  return "delivered";
+}
+
+function ReceiptTicks({
+  phase,
+  isMineBubble,
+}: {
+  phase: Exclude<ReceiptPhase, "uploading" | "sending">;
+  isMineBubble: boolean;
+}) {
+  const muted = isMineBubble ? "text-blue-100/80" : "text-slate-400";
+  const seenBlue = "text-sky-300";
+
+  if (phase === "sent") {
+    return (
+      <span
+        className={`select-none transition-colors duration-200 ${muted}`}
+        title="Sent"
+        aria-label="Sent"
+      >
+        ✓
+      </span>
+    );
+  }
+
+  if (phase === "delivered") {
+    return (
+      <span
+        className={`select-none transition-colors duration-200 ${muted}`}
+        title="Delivered"
+        aria-label="Delivered"
+      >
+        ✓✓
+      </span>
+    );
+  }
+
+  return (
+    <span
+      className={`select-none transition-colors duration-200 ${seenBlue}`}
+      title="Seen"
+      aria-label="Seen"
+    >
+      ✓✓
+    </span>
+  );
+}
 
 export default function MessageBubble({
   message,
   isMine,
   displaySender,
+  currentUserId,
+  currentUsername,
   onEdit,
   onDelete,
   onReact,
@@ -38,11 +174,45 @@ export default function MessageBubble({
     setDraft(message.content);
   }, [message.content, message.id]);
 
+  const rawVoiceUrl =
+    (message.mediaUrl && message.mediaUrl.trim().length > 0 ? message.mediaUrl : undefined) ??
+    extractVoiceUrlFromContent(message.content);
+  const voicePlaybackUrl = rawVoiceUrl ? toPlayableAudioUrl(rawVoiceUrl) : undefined;
+  const looksLikeAudioFile = Boolean(
+    rawVoiceUrl && /\.(webm|ogg|opus|mp3|wav|m4a)(\?|#|$)/i.test(rawVoiceUrl)
+  );
+  const urlLooksLikeAudio = Boolean(
+    voicePlaybackUrl && /\.(webm|ogg|opus|mp3|wav|m4a)(\?|#|$)/i.test(voicePlaybackUrl)
+  );
+  const showVoicePlayer = Boolean(
+    voicePlaybackUrl &&
+      (message.mediaType === "voice" ||
+        isVoiceJsonContent(message.content) ||
+        looksLikeAudioFile ||
+        urlLooksLikeAudio ||
+        (message.mediaType === "file" && looksLikeAudioFile))
+  );
+
+  const receiptPhase = getReceiptPhase(message, isMine, currentUserId, currentUsername);
+  const pendingStatusLabel =
+    isMine && receiptPhase === "uploading"
+      ? "Uploading…"
+      : isMine && receiptPhase === "sending"
+        ? "Sending…"
+        : null;
+  const tickPhase =
+    isMine &&
+    receiptPhase &&
+    receiptPhase !== "uploading" &&
+    receiptPhase !== "sending"
+      ? receiptPhase
+      : null;
+
   return (
     <div className={`group relative mb-6 flex w-full ${isMine ? "justify-end" : "justify-start"}`}>
       
       {/* 1. HOVER ACTIONS: Positioned outside the bubble to reduce clutter */}
-      {!isEditing && isMine && (
+      {!isEditing && isMine && message.mediaType !== "voice" && (
         <div className="absolute -top-8 right-2 flex items-center gap-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
           <button
             onClick={() => setIsEditing(true)}
@@ -108,16 +278,61 @@ export default function MessageBubble({
             </div>
           ) : (
             <>
-              {/* Message Content */}
-              {message.content && <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>}
-              
+              {/* Message Content (never show raw voice JSON — player handles it) */}
+              {message.content &&
+              !showVoicePlayer &&
+              message.mediaType !== "voice" &&
+              !isVoiceJsonContent(message.content) ? (
+                <p className="whitespace-pre-wrap leading-relaxed">{message.content}</p>
+              ) : null}
+
+              {showVoicePlayer && voicePlaybackUrl ? (
+                <VoiceMessagePlayer
+                  src={voicePlaybackUrl}
+                  hintDurationSec={message.voiceDurationSec}
+                  isMine={isMine}
+                />
+              ) : message.mediaType === "voice" && !voicePlaybackUrl ? (
+                <p className={`text-xs ${isMine ? "text-blue-100" : "text-slate-500"}`}>
+                  Voice message (no audio URL from server)
+                </p>
+              ) : null}
+
+              {isChatDebug() &&
+                (message.mediaType === "voice" ||
+                  looksLikeAudioFile ||
+                  isVoiceJsonContent(message.content)) && (
+                  <pre
+                    className={`mt-2 max-h-32 max-w-full overflow-auto rounded p-2 font-mono text-[9px] leading-tight ${
+                      isMine ? "bg-black/25 text-blue-50" : "bg-slate-100 text-slate-700"
+                    }`}
+                    spellCheck={false}
+                  >
+                    {JSON.stringify(
+                      {
+                        id: message.id,
+                        mediaType: message.mediaType,
+                        mediaUrl: message.mediaUrl,
+                        voiceDurationSec: message.voiceDurationSec,
+                        contentLen: message.content?.length ?? 0,
+                        contentHead: message.content?.slice(0, 100) ?? "",
+                        rawVoiceUrl,
+                        voicePlaybackUrl,
+                        showVoicePlayer,
+                      },
+                      null,
+                      1
+                    )}
+                  </pre>
+                )}
+
               {/* Image Attachments */}
               {message.mediaUrl && message.mediaType === "image" && (
                 <a href={message.mediaUrl} target="_blank" rel="noreferrer" className="mt-2 block overflow-hidden rounded-lg">
                   <img src={message.mediaUrl} alt="Attachment" className="max-h-64 w-full object-cover transition-transform hover:scale-105" />
                 </a>
               )}
-              {message.mediaUrl && message.mediaType !== "image" && (
+              {message.mediaUrl && message.mediaType !== "image" && message.mediaType !== "voice" && (
                 <a
                   href={message.mediaUrl}
                   target="_blank"
@@ -131,10 +346,20 @@ export default function MessageBubble({
               )}
 
               {/* Status & Time */}
-              <div className={`mt-1.5 flex items-center gap-1 text-[10px] ${isMine ? "text-blue-100/70" : "text-slate-400"}`}>
+              <div
+                className={`mt-1.5 flex flex-wrap items-center gap-1 text-[10px] ${isMine ? "text-blue-100/70" : "text-slate-400"}`}
+              >
+                {pendingStatusLabel ? <span>{pendingStatusLabel}</span> : null}
                 <span>{formatShortTime(message.createdAt)}</span>
                 {message.editedAt && <span>· Edited</span>}
-                {isMine && <span>· {deliveryStatus(message)}</span>}
+                {tickPhase ? (
+                  <span className="inline-flex items-center gap-0.5 transition-opacity duration-200">
+                    <ReceiptTicks phase={tickPhase} isMineBubble={isMine} />
+                  </span>
+                ) : null}
+                {tickPhase === "seen" && message.readAt && seenBySomeoneElse(message, currentUserId, currentUsername) ? (
+                  <span className="opacity-90">· Seen {formatShortTime(message.readAt)}</span>
+                ) : null}
               </div>
             </>
           )}

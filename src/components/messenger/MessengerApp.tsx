@@ -4,8 +4,8 @@ import { Client, IMessage } from "@stomp/stompjs";
 import axios from "axios";
 import SockJS from "sockjs-client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { Chat, ChatMember, ChatMessage } from "../../chat/types";
-import { backendApi, webApi } from "../../chat/api";
+import type { Chat, ChatMember, ChatMessage } from "@/chat/types";
+import { backendApi, webApi } from "@/chat/api";
 import {
   decodeJwtSub,
   extractMessageList,
@@ -643,7 +643,7 @@ export default function MessengerApp() {
             )}
             {chats.map((chat) => {
               const otherMember = !chat.isGroup
-                ? (chat.members ?? []).find((m) => {
+                ? (chat.members ?? []).find((m: ChatMember) => {
                     if (!m.username) return false;
                     if (!currentSub) return true;
                     return m.username !== currentSub;
@@ -795,11 +795,11 @@ export default function MessengerApp() {
                   </p>
                 </div>
                 <button
-                  className="rounded-md bg-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-300"
+                  className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-300"
                   type="button"
                   onClick={() => setShowCreateGroup(false)}
                 >
-                  Close
+                  X
                 </button>
               </div>
 
@@ -901,11 +901,11 @@ export default function MessengerApp() {
                   </p>
                 </div>
                 <button
-                  className="rounded-md bg-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-300"
+                  className="rounded-full bg-slate-200 px-2 py-1 text-xs text-slate-700 hover:bg-slate-300"
                   type="button"
                   onClick={() => setShowInviteMember(false)}
                 >
-                  Close
+                  X
                 </button>
               </div>
 
@@ -918,8 +918,8 @@ export default function MessengerApp() {
                     (() => {
                       const existingUsernames = new Set(
                         (activeChat.members ?? [])
-                          .map((m) => m.name)
-                          .filter((x): x is string => typeof x === "string" && x.length > 0)
+                          .map((m: ChatMember) => m.name)
+                          .filter((x: string | undefined): x is string => typeof x === "string" && x.length > 0)
                       );
                       const candidates = allUsers.filter((u) => {
                         if (!u.id || !u.name) return false;
