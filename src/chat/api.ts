@@ -26,8 +26,11 @@ export function readAxiosErrorMessage(err: unknown): string | null {
   return null;
 }
 
+const RESOLVED_BACKEND_ORIGIN =
+  process.env.NEXT_PUBLIC_SOCKET_URL?.trim() || "http://localhost:8080";
+
 export const backendApi = axios.create({
-  baseURL: "http://localhost:8080",
+  baseURL: RESOLVED_BACKEND_ORIGIN,
 });
 
 /** Auth routes proxied through Next.js (no baseURL) to avoid CORS/header limits. */
@@ -39,7 +42,7 @@ const authHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
 });
 /** Public origin for `<audio src>` and `fetch` uploads (same as axios `backendApi` baseURL). */
-export const CHAT_BACKEND_ORIGIN = "http://localhost:8080";
+export const CHAT_BACKEND_ORIGIN = RESOLVED_BACKEND_ORIGIN;
 const BACKEND_ORIGIN = CHAT_BACKEND_ORIGIN;
 const toAbsoluteBackendUrl = (raw: string | undefined): string | undefined => {
   if (!raw) return undefined;

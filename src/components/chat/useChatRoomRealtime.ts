@@ -13,7 +13,10 @@ type TypingPayload = {
   typing?: boolean;
 };
 
-const WS_URL = "http://localhost:8080/ws-chat";
+const WS_BASE = (
+  process.env.NEXT_PUBLIC_SOCKET_URL?.trim() || "http://localhost:8080"
+).replace(/\/+$/, "");
+const WS_URL = `${WS_BASE}/ws-chat`;
 
 type Handlers = {
   onRoomMessage?: (message: ChatMessage) => void;

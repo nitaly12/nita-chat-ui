@@ -318,7 +318,12 @@ export default function MessengerApp() {
     stompClientRef.current?.deactivate();
 
     const client = new Client({
-      webSocketFactory: () => new SockJS("http://localhost:8080/ws-chat"),
+      webSocketFactory: () =>
+        new SockJS(
+          `${(
+            process.env.NEXT_PUBLIC_SOCKET_URL?.trim() || "http://localhost:8080"
+          ).replace(/\/+$/, "")}/ws-chat`
+        ),
       connectHeaders: {
         Authorization: `Bearer ${accessToken}`,
         accessToken,
