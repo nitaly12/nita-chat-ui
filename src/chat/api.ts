@@ -829,8 +829,12 @@ export const chatApi = {
     };
   },
 
-  async register(username: string, password: string): Promise<void> {
-    await webApi.post("/api/auth/register", { username, password });
+  async register(username: string, email: string, password: string): Promise<void> {
+    await webApi.post("/api/auth/register", {
+      username: username.trim(),
+      email: email.trim(),
+      password,
+    });
   },
 
   /** POST /api/auth/forgot-password (Next proxy) — backend sends OTP to email (`{ email }`). */

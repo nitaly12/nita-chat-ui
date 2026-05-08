@@ -51,6 +51,7 @@ export default function ChatApp() {
   const [activeRoomId, setActiveRoomId] = useState("");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [usernameInput, setUsernameInput] = useState("");
+  const [emailInput, setEmailInput] = useState("");
   const [passwordInput, setPasswordInput] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [statusTone, setStatusTone] = useState<"error" | "success">("error");
@@ -585,10 +586,17 @@ export default function ChatApp() {
   const handleAuth = async () => {
     try {
       if (authMode === "register") {
-        await chatApi.register(usernameInput.trim(), passwordInput.trim());
+        const email = emailInput.trim();
+        if (!email) {
+          setStatusTone("error");
+          setStatusMessage("Email is required.");
+          return;
+        }
+        await chatApi.register(usernameInput.trim(), email, passwordInput.trim());
         setAuthMode("login");
         setStatusTone("success");
         setStatusMessage("Registered. Please login.");
+        setEmailInput("");
         return;
       }
       const auth = await chatApi.login(usernameInput.trim(), passwordInput.trim());
@@ -603,6 +611,7 @@ export default function ChatApp() {
       setCurrentUsername(auth.currentUsername);
       setStatusMessage("");
       setUsernameInput("");
+      setEmailInput("");
       setPasswordInput("");
       setPasswordVisible(false);
       await loadAppData();
@@ -639,6 +648,16 @@ export default function ChatApp() {
               onChange={(e) => setUsernameInput(e.target.value)}
               autoComplete="username"
             />
+            {authMode === "register" ? (
+              <input
+                className="w-full rounded-2xl border border-[#b8c9bc] bg-[#fefcf8] px-4 py-3 text-sm text-[#2c3d33] outline-none placeholder:text-[#7a8f82] focus:border-[#7d9b84] focus:ring-2 focus:ring-[#7d9b84]/35"
+                type="email"
+                placeholder="Email"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                autoComplete="email"
+              />
+            ) : null}
             <div className="relative">
               <input
                 className="w-full rounded-2xl border border-[#b8c9bc] bg-[#fefcf8] px-4 py-3 pr-12 text-sm text-[#2c3d33] outline-none placeholder:text-[#7a8f82] focus:border-[#7d9b84] focus:ring-2 focus:ring-[#7d9b84]/35"
