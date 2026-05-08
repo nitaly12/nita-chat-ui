@@ -27,6 +27,11 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
   const [uploadBusy, setUploadBusy] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
 
   const applyProfile = useCallback((p: MyUserProfile) => {
     setDisplayName(p.displayName ?? p.username ?? "");
@@ -54,6 +59,15 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
     if (!open || !token) return;
     void loadProfile();
   }, [open, token, loadProfile]);
+
+  useEffect(() => {
+    if (!open) {
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordMessage(null);
+    }
+  }, [open]);
 
   const persistThemeToApi = useCallback(
     async (next: "light" | "dark", previous: "light" | "dark") => {
@@ -105,6 +119,37 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
     }
   };
 
+  const onChangePassword = async () => {
+    const cur = currentPassword;
+    const next = newPassword.trim();
+    const confirm = confirmPassword.trim();
+    if (!cur || !next) {
+      setPasswordMessage("Enter your current password and a new password.");
+      return;
+    }
+    if (next.length < 8) {
+      setPasswordMessage("New password must be at least 8 characters.");
+      return;
+    }
+    if (next !== confirm) {
+      setPasswordMessage("New password and confirmation do not match.");
+      return;
+    }
+    setPasswordMessage(null);
+    setPasswordBusy(true);
+    try {
+      await chatApi.changePassword(token, cur, next);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordMessage("Password updated.");
+    } catch (e) {
+      setPasswordMessage(readAxiosErrorMessage(e) ?? "Could not change password.");
+    } finally {
+      setPasswordBusy(false);
+    }
+  };
+
   const onSave = async () => {
     const name = displayName.trim();
     if (!name) {
@@ -141,10 +186,10 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
         role="dialog"
         aria-modal="true"
         aria-labelledby="profile-settings-title"
-        aria-busy={loading || saveBusy || uploadBusy}
+        aria-busy={loading || saveBusy || uploadBusy || passwordBusy}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-6 py-4 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900">
+        <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-6 py-2 dark:border-slate-700 dark:from-slate-900 dark:to-slate-900">
           <div className="flex items-center justify-between gap-3">
             <h2 id="profile-settings-title" className="text-lg font-semibold tracking-tight text-slate-900 dark:text-white">
               Profile settings
@@ -160,7 +205,7 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
           </div>
         </div>
 
-        <div className="space-y-6 px-6 py-6">
+        <div className="space-y-2 px-6 py-6">
           {loadError ? (
             <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/50 dark:text-red-200">
               {loadError}
@@ -207,7 +252,7 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
 
           <div className="space-y-2">
             <label htmlFor="profile-display-name" className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-              Display name
+              Name
             </label>
             <input
               id="profile-display-name"
@@ -241,10 +286,59 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
                 </button>
               ))}
             </div>
-            <p className="text-[11px] text-slate-500 dark:text-slate-400">
-              Switching Light/Dark saves to your account immediately. Save stores your display name (and theme again).
-            </p>
           </div>
+
+          {/* <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4 dark:border-slate-600 dark:bg-slate-800/50">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              Change password
+            </span>
+            <input
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-[#7d9b84] focus:ring-2 focus:ring-[#7d9b84]/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+              type="password"
+              autoComplete="current-password"
+              placeholder="Current password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              disabled={loading || !!loadError || passwordBusy}
+            />
+            <input
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-[#7d9b84] focus:ring-2 focus:ring-[#7d9b84]/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+              type="password"
+              autoComplete="new-password"
+              placeholder="New password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              disabled={loading || !!loadError || passwordBusy}
+            />
+            <input
+              className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 outline-none focus:border-[#7d9b84] focus:ring-2 focus:ring-[#7d9b84]/30 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+              type="password"
+              autoComplete="new-password"
+              placeholder="Confirm new password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              disabled={loading || !!loadError || passwordBusy}
+            />
+            {passwordMessage ? (
+              <p
+                className={`text-sm ${
+                  passwordMessage.startsWith("Password updated")
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-red-600 dark:text-red-400"
+                }`}
+              >
+                {passwordMessage}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              className="w-full rounded-xl bg-[#5a7a62] py-2.5 text-sm font-semibold text-white shadow hover:bg-[#4d6b54] disabled:opacity-50 dark:bg-[#6d8a74] dark:hover:bg-[#5a7a62]"
+              disabled={loading || !!loadError || passwordBusy}
+              onClick={() => void onChangePassword()}
+            >
+              {passwordBusy ? "Updating…" : "Update password"}
+            </button>
+          </div> */}
 
           {formError ? <p className="text-sm text-red-600 dark:text-red-400">{formError}</p> : null}
 

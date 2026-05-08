@@ -27,7 +27,8 @@ export function readAxiosErrorMessage(err: unknown): string | null {
 }
 
 const RESOLVED_BACKEND_ORIGIN = (
-  process.env.NEXT_PUBLIC_SOCKET_URL?.trim() || "http://localhost:8080"
+  process.env.NEXT_PUBLIC_API_BASE?.trim() ||
+  "/backend"
 ).replace(/\/+$/, "");
 
 export const backendApi = axios.create({
@@ -410,6 +411,7 @@ const mapMessage = (value: unknown): ChatMessage => {
   })();
   const reactionList = Array.isArray(v.reactions) ? v.reactions : [];
   const reactionMap: Record<string, number> = {};
+  const reactionUsers: Record<string, string[]> = {};
   for (const r of reactionList) {
     const rr = (r ?? {}) as Record<string, unknown>;
     const emoji = rr.emoji;
@@ -422,6 +424,25 @@ const mapMessage = (value: unknown): ChatMessage => {
           ? Number(countRaw)
           : 1;
     reactionMap[emoji] = count;
+    const usersRaw =
+      rr.userIds ??
+      rr.user_ids ??
+      rr.users ??
+      rr.reactors ??
+      rr.reactedBy ??
+      rr.reacted_by;
+    if (Array.isArray(usersRaw)) {
+      const users = usersRaw
+        .map((u) => {
+          if (typeof u === "string" || typeof u === "number") return String(u);
+          if (!u || typeof u !== "object") return "";
+          const vv = u as Record<string, unknown>;
+          const id = vv.id ?? vv.userId ?? vv.user_id ?? vv.username ?? vv.userName;
+          return id != null ? String(id) : "";
+        })
+        .filter((v): v is string => v.trim().length > 0);
+      if (users.length > 0) reactionUsers[emoji] = Array.from(new Set(users));
+    }
   }
   const myReactionRaw = v.myReaction ?? v.my_reaction ?? v.selfReaction;
   const myReaction =
@@ -453,12 +474,42 @@ const mapMessage = (value: unknown): ChatMessage => {
 
   const msgTypeRaw = v.type ?? v.messageType ?? v.message_type;
   const messageType = typeof msgTypeRaw === "string" && msgTypeRaw.trim() ? msgTypeRaw.trim() : undefined;
+  const parentMessageIdRaw =
+    v.parentMessageId ?? v.parent_message_id ?? v.parentId ?? v.parent_id;
+  const parentMessageRaw =
+    v.parentMessage ??
+    v.parent_message ??
+    v.parent ??
+    (v.replyTo && typeof v.replyTo === "object" ? v.replyTo : undefined);
+  const parentMessage =
+    parentMessageRaw && typeof parentMessageRaw === "object"
+      ? (() => {
+          const p = parentMessageRaw as Record<string, unknown>;
+          const pid = p.id ?? p.messageId ?? p.message_id ?? parentMessageIdRaw;
+          const psender = firstNonEmptyString(
+            p.sender,
+            p.senderName,
+            p.sender_name,
+            p.username,
+            p.userName
+          );
+          const pcontent = firstNonEmptyString(p.content, p.message, p.text);
+          if (pid == null && !psender && !pcontent) return undefined;
+          return {
+            id: String(pid ?? crypto.randomUUID()),
+            sender: psender ?? undefined,
+            content: pcontent ?? undefined,
+          };
+        })()
+      : undefined;
 
   return {
     id: String(v.id ?? v.messageId ?? crypto.randomUUID()),
     roomId: String(v.roomId ?? v.chatRoomId ?? ""),
     senderId: senderId != null ? String(senderId) : undefined,
     sender: String(senderName),
+    parentMessageId: parentMessageIdRaw != null ? String(parentMessageIdRaw) : parentMessage?.id,
+    parentMessage,
     type: messageType,
     content: voiceFromJson != null && mediaUrl ? "" : content,
     createdAt: String(v.createdAt ?? v.timestamp ?? new Date().toISOString()),
@@ -476,6 +527,7 @@ const mapMessage = (value: unknown): ChatMessage => {
         ? voiceDurationFromServer
         : undefined,
     reactions: Object.keys(reactionMap).length > 0 ? reactionMap : undefined,
+    reactionUsers: Object.keys(reactionUsers).length > 0 ? reactionUsers : undefined,
     myReaction,
   };
 };
@@ -779,6 +831,59 @@ export const chatApi = {
 
   async register(username: string, password: string): Promise<void> {
     await webApi.post("/api/auth/register", { username, password });
+  },
+
+  /** POST /api/auth/forgot-password (Next proxy) — backend sends OTP to email (`{ email }`). */
+  async requestPasswordReset(email: string): Promise<void> {
+    await webApi.post("/api/auth/forgot-password", {
+      email: email.trim(),
+    });
+  },
+  
+
+  /** POST /api/auth/verify-otp (Next proxy) — optional check, does not consume OTP. */
+  async verifyPasswordResetOtp(email: string, otp: string): Promise<void> {
+    await webApi.post("/api/auth/verify-otp", {
+      email: email.trim(),
+      otp: otp.trim(),
+    });
+  },
+
+  /**
+   * POST /api/auth/reset-password (Next proxy) — consumes OTP and updates password.
+   * Body: `{ email, otp, newPassword }`
+   */
+  async resetPasswordWithOtp(
+    email: string,
+    otp: string,
+    newPassword: string
+  ): Promise<void> {
+    await webApi.post("/api/auth/reset-password", {
+      email: email.trim(),
+      otp: otp.trim(),
+      newPassword,
+    });
+  },
+
+  /** Legacy token-based reset flow (`/reset-password?token=...`). */
+  async resetPasswordWithToken(token: string, newPassword: string): Promise<void> {
+    await webApi.post("/api/auth/reset-password", {
+      token: token.trim(),
+      newPassword,
+    });
+  },
+
+  /** PUT /api/auth/change-password (Next proxy) — requires JWT; backend should verify current password with BCrypt. */
+  async changePassword(
+    token: string,
+    currentPassword: string,
+    newPassword: string
+  ): Promise<void> {
+    await webApi.put(
+      "/api/auth/change-password",
+      { currentPassword, newPassword },
+      { headers: authHeaders(token) }
+    );
   },
 
   async getChats(token: string): Promise<Chat[]> {
@@ -1225,10 +1330,22 @@ export const chatApi = {
     return roomId != null ? String(roomId) : null;
   },
 
-  async sendMessage(token: string, roomId: string, content: string): Promise<ChatMessage | null> {
+  async sendMessage(
+    token: string,
+    roomId: string,
+    content: string,
+    parentMessageId?: string
+  ): Promise<ChatMessage | null> {
     const response = await backendApi.post(
       "/api/messages",
-      { roomId, content, attachmentUrl: "", attachmentType: "", attachmentName: "" },
+      {
+        roomId,
+        content,
+        parentMessageId: parentMessageId?.trim() || undefined,
+        attachmentUrl: "",
+        attachmentType: "",
+        attachmentName: "",
+      },
       { headers: authHeaders(token) }
     );
     if (!response.data) return null;
@@ -1361,12 +1478,122 @@ export const chatApi = {
     );
   },
 
-  async reactToMessage(token: string, messageId: string, emoji: string): Promise<void> {
-    await backendApi.post(
+  async reactToMessage(
+    token: string,
+    messageId: string,
+    emoji: string
+  ): Promise<
+    { reactions?: Record<string, number>; reactionUsers?: Record<string, string[]>; myReaction?: string | null } | null
+  > {
+    const response = await backendApi.post(
       `/api/messages/${messageId}/reactions`,
       { emoji },
       { headers: authHeaders(token) }
     );
+    const data = response.data;
+    if (!data || typeof data !== "object") return null;
+
+    const v = data as Record<string, unknown>;
+    const inner =
+      v.message && typeof v.message === "object"
+        ? (v.message as Record<string, unknown>)
+        : v.data && typeof v.data === "object"
+          ? (v.data as Record<string, unknown>)
+          : v.result && typeof v.result === "object"
+            ? (v.result as Record<string, unknown>)
+            : v;
+
+    const fromMapped = mapMessage(inner);
+    const hasMappedReactions =
+      !!fromMapped.reactions ||
+      !!fromMapped.reactionUsers ||
+      typeof fromMapped.myReaction !== "undefined";
+    if (hasMappedReactions) {
+      return {
+        reactions: fromMapped.reactions,
+        reactionUsers: fromMapped.reactionUsers,
+        myReaction: fromMapped.myReaction ?? null,
+      };
+    }
+
+    const reactionsRaw = inner.reactions;
+    let reactions: Record<string, number> | undefined;
+    let reactionUsers: Record<string, string[]> | undefined;
+    if (Array.isArray(reactionsRaw)) {
+      const map: Record<string, number> = {};
+      const usersMap: Record<string, string[]> = {};
+      for (const item of reactionsRaw) {
+        const r = (item ?? {}) as Record<string, unknown>;
+        const e = typeof r.emoji === "string" ? r.emoji : null;
+        if (!e) continue;
+        const c =
+          typeof r.count === "number"
+            ? r.count
+            : typeof r.total === "number"
+              ? r.total
+              : typeof r.count === "string" && /^\d+$/.test(r.count)
+                ? Number(r.count)
+                : 1;
+        map[e] = c;
+        const usersRaw =
+          r.userIds ?? r.user_ids ?? r.users ?? r.reactors ?? r.reactedBy ?? r.reacted_by;
+        if (Array.isArray(usersRaw)) {
+          const users = usersRaw
+            .map((u) => {
+              if (typeof u === "string" || typeof u === "number") return String(u);
+              if (!u || typeof u !== "object") return "";
+              const uu = u as Record<string, unknown>;
+              const uid = uu.id ?? uu.userId ?? uu.user_id ?? uu.username ?? uu.userName;
+              return uid != null ? String(uid) : "";
+            })
+            .filter((v): v is string => v.trim().length > 0);
+          if (users.length > 0) usersMap[e] = Array.from(new Set(users));
+        }
+      }
+      if (Object.keys(map).length > 0) reactions = map;
+      if (Object.keys(usersMap).length > 0) reactionUsers = usersMap;
+    }
+    const myReactionRaw = inner.myReaction ?? inner.my_reaction ?? inner.selfReaction;
+    const myReaction =
+      typeof myReactionRaw === "string" && myReactionRaw.trim().length > 0
+        ? myReactionRaw.trim()
+        : null;
+    return { reactions, reactionUsers, myReaction };
+  },
+
+  /**
+   * Best-effort unreact for message emoji.
+   * Tries common backend patterns; returns true when one succeeds.
+   */
+  async unreactToMessage(token: string, messageId: string, emoji: string): Promise<boolean> {
+    const id = encodeURIComponent(messageId);
+    const e = encodeURIComponent(emoji);
+    const headers = authHeaders(token);
+    const attempts: Array<() => Promise<void>> = [
+      () => backendApi.delete(`/api/messages/${id}/reactions/${e}`, { headers }),
+      () =>
+        backendApi.delete(`/api/messages/${id}/reactions`, {
+          headers,
+          data: { emoji },
+        }),
+      () =>
+        backendApi.post(
+          `/api/messages/${id}/reactions/remove`,
+          { emoji },
+          { headers }
+        ),
+    ];
+    for (const attempt of attempts) {
+      try {
+        await attempt();
+        return true;
+      } catch (err) {
+        if (axios.isAxiosError(err) && [404, 405].includes(err.response?.status ?? -1)) {
+          continue;
+        }
+      }
+    }
+    return false;
   },
 
   async searchMessages(

@@ -19,6 +19,7 @@ import ChatWindow from "./ChatWindow";
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import { useChatRoomRealtime } from "./useChatRoomRealtime";
 import { useChatSeenReceipt } from "./useChatSeenReceipt";
+import ChatSkeleton from "../skeleton/ChatSkeleton";
 
 function dedupeMessagesKeepFirst(items: ChatMessage[]): ChatMessage[] {
   const seen = new Set<string>();
@@ -67,6 +68,11 @@ export default function ChatApp() {
   const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
   const [profileDisplayName, setProfileDisplayName] = useState<string | null>(null);
   const [topAlert, setTopAlert] = useState<GlobalAlertState>(null);
+  const [appLoading, setAppLoading] = useState(false);
+  const [chatSearchQuery, setChatSearchQuery] = useState("");
+  const [authToastPreview, setAuthToastPreview] = useState<string | null>(null);
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const reactionReqSeqRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
     const on = isChatDebug();
@@ -135,6 +141,7 @@ export default function ChatApp() {
 
   const loadAppData = useCallback(async () => {
     if (!token) return;
+    setAppLoading(true);
     try {
       let meId: string | null = null;
       let meName: string | null = null;
@@ -208,6 +215,8 @@ export default function ChatApp() {
       setUsers(userList);
     } catch (err) {
       handleApiError(err, "Failed to load chats.");
+    } finally {
+      setAppLoading(false);
     }
   }, [token, handleApiError]);
 
@@ -336,27 +345,32 @@ export default function ChatApp() {
 
   const onStompRoomMessage = useCallback(
     (msg: ChatMessage) => {
-      const roomId = String(msg.roomId ?? "");
-      const mine = isMessageFromCurrentUser(msg, currentUserId, currentUsername);
+      const incoming: ChatMessage = {
+        ...msg,
+        parentMessage: msg.parentMessage ? { ...msg.parentMessage } : undefined,
+        parentMessageId: msg.parentMessageId ?? msg.parentMessage?.id,
+      };
+      const roomId = String(incoming.roomId ?? "");
+      const mine = isMessageFromCurrentUser(incoming, currentUserId, currentUsername);
       const roomIsActive = roomId !== "" && roomId === activeRoomId;
       if (!mine && !roomIsActive) {
-        const senderName = msg.sender?.trim() || "New message";
+        const senderName = incoming.sender?.trim() || "New message";
         const userMatch =
           users.find(
             (u) =>
-              (msg.senderId != null && String(u.id) === String(msg.senderId)) ||
+              (incoming.senderId != null && String(u.id) === String(incoming.senderId)) ||
               String(u.username).toLowerCase() === senderName.toLowerCase()
           ) ?? null;
         const previewText =
-          msg.mediaType === "voice"
+          incoming.mediaType === "voice"
             ? "Sent a voice message"
-            : msg.mediaType === "image"
+            : incoming.mediaType === "image"
               ? "Sent an image"
-              : msg.mediaType === "file"
+              : incoming.mediaType === "file"
                 ? "Sent a file"
-                : (msg.content || "").trim() || "New message";
+                : (incoming.content || "").trim() || "New message";
         setTopAlert({
-          id: `${roomId}:${String(msg.id)}:${Date.now()}`,
+          id: `${roomId}:${String(incoming.id)}:${Date.now()}`,
           roomId,
           senderName: userMatch?.displayName?.trim() || senderName,
           preview: previewText,
@@ -365,35 +379,142 @@ export default function ChatApp() {
       }
 
       setMessages((prev) => {
-        const idKey = String(msg.id);
-        if (prev.some((m) => String(m.id) === idKey)) return prev;
+        const idKey = String(incoming.id);
+        const existing = prev.find((m) => String(m.id) === idKey);
+        if (existing) {
+          const mergedParentMessage = incoming.parentMessage ?? existing.parentMessage;
+          const mergedParentMessageId =
+            incoming.parentMessageId ?? existing.parentMessageId ?? mergedParentMessage?.id;
+          const next = prev.map((m) =>
+            String(m.id) === idKey
+              ? {
+                  ...m,
+                  ...incoming,
+                  mine: m.mine ?? incoming.mine,
+                  parentMessageId: mergedParentMessageId,
+                  parentMessage: mergedParentMessage,
+                }
+              : m
+          );
+          return dedupeMessagesKeepFirst(next);
+        }
 
-        const fromMe = isMessageFromCurrentUser(msg, currentUserId, currentUsername);
+        const fromMe = isMessageFromCurrentUser(incoming, currentUserId, currentUsername);
         let next = prev;
         if (fromMe) {
           next = prev.filter((m) => {
-            if (!m.pending || !m.mine || m.roomId !== msg.roomId) return true;
-            if (m.content && msg.content && m.content === msg.content) return false;
-            if (String(m.id).startsWith("temp-media-") && (msg.mediaUrl || msg.mediaType)) return false;
-            if (String(m.id).startsWith("temp-voice-") && msg.mediaType === "voice") return false;
+            if (!m.pending || !m.mine || m.roomId !== incoming.roomId) return true;
+            if (m.content && incoming.content && m.content === incoming.content) return false;
+            if (String(m.id).startsWith("temp-media-") && (incoming.mediaUrl || incoming.mediaType)) return false;
+            if (String(m.id).startsWith("temp-voice-") && incoming.mediaType === "voice") return false;
             return true;
           });
         }
 
         const isMine =
-          Boolean(currentUserId && msg.senderId != null && String(msg.senderId) === String(currentUserId)) ||
-          Boolean(currentUsername && msg.sender === currentUsername);
-        return dedupeMessagesKeepFirst([...next, { ...msg, mine: isMine || msg.mine }]);
+          Boolean(
+            currentUserId &&
+              incoming.senderId != null &&
+              String(incoming.senderId) === String(currentUserId)
+          ) || Boolean(currentUsername && incoming.sender === currentUsername);
+        return dedupeMessagesKeepFirst([...next, { ...incoming, mine: isMine || incoming.mine }]);
       });
     },
     [activeRoomId, currentUserId, currentUsername, users]
+  );
+
+  const onStompRoomReactionEvent = useCallback(
+    (event: {
+      action?: string;
+      messageId?: string | number;
+      roomId?: string | number;
+      emoji?: string;
+      userId?: string | number;
+      username?: string;
+    }) => {
+      const messageId = event.messageId != null ? String(event.messageId) : "";
+      const emoji = (event.emoji ?? "").trim();
+      if (!messageId || !emoji) return;
+      const action = String(event.action ?? "ADDED").toUpperCase();
+      const actorId = event.userId != null ? String(event.userId) : null;
+      const actorUsername = (event.username ?? "").trim().toLowerCase();
+      const actorKey = actorId ?? (actorUsername.length > 0 ? actorUsername : null);
+      const isMineEvent =
+        (actorId != null && currentUserId != null && actorId === String(currentUserId)) ||
+        (actorUsername.length > 0 &&
+          currentUsername != null &&
+          actorUsername === String(currentUsername).trim().toLowerCase());
+
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (String(m.id) !== messageId) return m;
+          const nextMap = { ...(m.reactions ?? {}) };
+          const nextUsers = { ...(m.reactionUsers ?? {}) };
+          if (action === "REMOVED" || action === "DELETED" || action === "CANCELLED") {
+            // If this is my own websocket echo and optimistic UI already removed it,
+            // do not decrement again (prevents lingering +1 after toggle-off).
+            if (isMineEvent && m.myReaction !== emoji) {
+              if (actorKey) {
+                const users = (nextUsers[emoji] ?? []).filter((u) => u !== actorKey);
+                if (users.length > 0) nextUsers[emoji] = users;
+                else delete nextUsers[emoji];
+              }
+              return {
+                ...m,
+                reactionUsers: Object.keys(nextUsers).length > 0 ? nextUsers : undefined,
+                myReaction: m.myReaction,
+              };
+            }
+            const curr = Math.max(0, (nextMap[emoji] ?? 0) - 1);
+            if (curr > 0) nextMap[emoji] = curr;
+            else delete nextMap[emoji];
+            if (actorKey) {
+              const users = (nextUsers[emoji] ?? []).filter((u) => u !== actorKey);
+              if (users.length > 0) nextUsers[emoji] = users;
+              else delete nextUsers[emoji];
+            }
+            return {
+              ...m,
+              reactions: Object.keys(nextMap).length > 0 ? nextMap : undefined,
+              reactionUsers: Object.keys(nextUsers).length > 0 ? nextUsers : undefined,
+              myReaction: isMineEvent && m.myReaction === emoji ? undefined : m.myReaction,
+            };
+          }
+          // Default ADDED/UPDATED behavior.
+          // If this is my own websocket echo and optimistic UI already applied this emoji,
+          // do not increment a second time.
+          if (isMineEvent && m.myReaction === emoji) {
+            if (actorKey) {
+              const users = nextUsers[emoji] ?? [];
+              if (!users.includes(actorKey)) nextUsers[emoji] = [...users, actorKey];
+            }
+            return {
+              ...m,
+              reactionUsers: Object.keys(nextUsers).length > 0 ? nextUsers : undefined,
+              myReaction: emoji,
+            };
+          }
+          const users = nextUsers[emoji] ?? [];
+          const alreadyInUsers = actorKey ? users.includes(actorKey) : false;
+          nextMap[emoji] = (nextMap[emoji] ?? 0) + (alreadyInUsers ? 0 : 1);
+          if (actorKey) nextUsers[emoji] = alreadyInUsers ? users : [...users, actorKey];
+          return {
+            ...m,
+            reactions: nextMap,
+            reactionUsers: Object.keys(nextUsers).length > 0 ? nextUsers : undefined,
+            myReaction: isMineEvent ? emoji : m.myReaction,
+          };
+        })
+      );
+    },
+    [currentUserId, currentUsername]
   );
 
   const { sendTypingPing, typingUsers } = useChatRoomRealtime(
     token || null,
     activeRoomId || null,
     currentUsername,
-    { onRoomMessage: onStompRoomMessage }
+    { onRoomMessage: onStompRoomMessage, onRoomReactionEvent: onStompRoomReactionEvent }
   );
 
   const onMessagesSeen = useCallback(
@@ -411,6 +532,24 @@ export default function ChatApp() {
     const saved = window.localStorage.getItem("accessToken") ?? "";
     if (!saved) return;
     setToken(saved);
+  }, []);
+
+  /** After OTP reset flow: `/?passwordReset=1` shows sign-in hint and clears the query. */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("passwordReset") !== "1") return;
+    params.delete("passwordReset");
+    const qs = params.toString();
+    const path = window.location.pathname;
+    window.history.replaceState(null, "", qs ? `${path}?${qs}` : path);
+    const saved = window.localStorage.getItem("accessToken") ?? "";
+    if (saved) {
+      setChatNotice("Your password was reset. Sign out and sign in again with your new password if needed.");
+    } else {
+      setStatusTone("success");
+      setStatusMessage("Password updated. Sign in with your new password.");
+    }
   }, []);
 
   useEffect(() => {
@@ -465,52 +604,87 @@ export default function ChatApp() {
       setStatusMessage("");
       setUsernameInput("");
       setPasswordInput("");
+      setPasswordVisible(false);
       await loadAppData();
     } catch {
       setStatusTone("error");
-      setStatusMessage("Authentication failed.");
+      setStatusMessage("");
+      setAuthToastPreview("Authentication failed.");
+      setPasswordVisible(false);
     }
   };
 
   if (!token) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-slate-100 p-4">
-        <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow">
-          <h1 className="text-xl font-semibold">
-            {authMode === "login" ? "Login" : "Register"}
+      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#dde8e0] via-[#ebe4dc] to-[#d8e4f0] p-4">
+        <TopAlert
+          key={authToastPreview ?? "auth-toast-empty"}
+          open={Boolean(authToastPreview)}
+          senderName="Auth"
+          preview={authToastPreview ?? ""}
+          avatarUrl={null}
+          onClose={() => setAuthToastPreview(null)}
+          onClick={() => setAuthToastPreview(null)}
+          durationMs={4500}
+        />
+        <div className="w-full max-w-sm rounded-3xl border border-[#b8c9bc]/70 bg-[#faf8f3]/95 p-6 shadow-[0_20px_50px_-12px_rgba(60,80,70,0.18)] backdrop-blur-sm sm:p-8">
+          <h1 className="font-serif text-xl font-semibold tracking-tight text-[#2c3d33] sm:text-2xl">
+            {authMode === "login" ? "Sign in" : "Create account"}
           </h1>
-          <div className="mt-4 space-y-3">
+          <div className="mt-5 space-y-3">
             <input
-              className="w-full rounded-lg border border-slate-300 px-3 py-2"
+              className="w-full rounded-2xl border border-[#b8c9bc] bg-[#fefcf8] px-4 py-3 text-sm text-[#2c3d33] outline-none placeholder:text-[#7a8f82] focus:border-[#7d9b84] focus:ring-2 focus:ring-[#7d9b84]/35"
               placeholder="Username"
               value={usernameInput}
               onChange={(e) => setUsernameInput(e.target.value)}
+              autoComplete="username"
             />
-            <input
-              className="w-full rounded-lg border border-slate-300 px-3 py-2"
-              type="password"
-              placeholder="Password"
-              value={passwordInput}
-              onChange={(e) => setPasswordInput(e.target.value)}
-            />
+            <div className="relative">
+              <input
+                className="w-full rounded-2xl border border-[#b8c9bc] bg-[#fefcf8] px-4 py-3 pr-12 text-sm text-[#2c3d33] outline-none placeholder:text-[#7a8f82] focus:border-[#7d9b84] focus:ring-2 focus:ring-[#7d9b84]/35"
+                type={passwordVisible ? "text" : "password"}
+                placeholder="Password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                autoComplete={authMode === "login" ? "current-password" : "new-password"}
+              />
+              <button
+                type="button"
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl px-2 py-1 text-sm text-[#4a6b7d] hover:bg-[#efeadf] focus:outline-none focus:ring-2 focus:ring-[#7d9b84]/35"
+                aria-label={passwordVisible ? "Hide password" : "Show password"}
+                onClick={() => setPasswordVisible((v) => !v)}
+              >
+                {passwordVisible ? "🙈" : "👁"}
+              </button>
+            </div>
             {statusMessage && (
               <p
                 className={`text-sm ${
-                  statusTone === "success" ? "text-emerald-600" : "text-red-600"
+                  statusTone === "success" ? "text-emerald-700" : "text-red-700"
                 }`}
               >
                 {statusMessage}
               </p>
             )}
             <button
-              className="w-full rounded-lg bg-blue-600 px-3 py-2 text-white hover:bg-blue-700"
+              className="w-full rounded-2xl bg-[#7d9b84] py-3.5 text-sm font-semibold text-white shadow-md shadow-[#5a7a62]/25 hover:bg-[#6d8a74]"
               type="button"
               onClick={() => void handleAuth()}
             >
-              {authMode === "login" ? "Login" : "Create account"}
+              {authMode === "login" ? "Sign in" : "Create account"}
             </button>
+            {authMode === "login" ? (
+              <div className="text-center">
+                <Link
+                  href="/forgot-password"
+                  className="text-sm font-medium text-[#4a6b7d] underline decoration-[#4a6b7d]/30 underline-offset-4 hover:text-[#3d5a6a]"
+                >
+                  Forgot password?
+                </Link>
+              </div>
+            ) : null}
             <button
-              className="w-full text-sm text-slate-600 underline"
+              className="w-full text-sm font-medium text-[#4a5c52] underline decoration-[#4a5c52]/30 underline-offset-4"
               type="button"
               onClick={() =>
                 setAuthMode((prev) => (prev === "login" ? "register" : "login"))
@@ -524,8 +698,12 @@ export default function ChatApp() {
     );
   }
 
+  if (appLoading && chats.length === 0) {
+    return <ChatSkeleton />;
+  }
+
   return (
-    <div className="h-screen bg-slate-100 p-0 dark:bg-slate-950 sm:p-3">
+    <div className="h-screen bg-gradient-to-br from-[#e8efe8] via-[#f2ede6] to-[#e3ecf5] p-0 dark:from-slate-950 dark:via-slate-900 dark:to-slate-900 sm:p-3">
       <TopAlert
         key={topAlert?.id ?? "top-alert-empty"}
         open={Boolean(topAlert)}
@@ -540,8 +718,8 @@ export default function ChatApp() {
           setTopAlert(null);
         }}
       />
-      <div className="mx-auto flex h-full max-w-[1400px] flex-col overflow-hidden border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:rounded-2xl">
-        <header className="relative flex items-center justify-between gap-2 border-b border-slate-200 bg-white px-3 py-3 dark:border-slate-700 dark:bg-slate-900/80 sm:gap-4 sm:px-5">
+      <div className="mx-auto flex h-full max-w-[1400px] flex-col overflow-hidden border border-[#c7d5cb] bg-[#fbfaf6] shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:rounded-3xl">
+        <header className="relative flex items-center justify-between gap-2 border-b border-[#d7e2d9] bg-[#fcfbf7] px-3 py-3 dark:border-slate-700 dark:bg-slate-900/80 sm:gap-4 sm:px-5">
           {chatDebugOn ? (
             <div className="absolute left-1/2 top-2 z-50 -translate-x-1/2 rounded-full border border-amber-400 bg-amber-100 px-3 py-1 text-[10px] font-semibold text-amber-950 shadow dark:border-amber-500 dark:bg-amber-950/90 dark:text-amber-100">
               CHAT_DEBUG — see DevTools console + voice bubble panels
@@ -553,42 +731,38 @@ export default function ChatApp() {
                 🔎
               </span>
               <input
-                className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm text-slate-900 outline-none focus:border-blue-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
+                className="h-10 w-full rounded-xl border border-[#d7e2d9] bg-[#f7f4ec] pl-9 pr-3 text-sm text-slate-900 outline-none focus:border-[#7d9b84] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500"
                 placeholder="Search anything ..."
+                value={chatSearchQuery}
+                onChange={(e) => setChatSearchQuery(e.target.value)}
               />
             </div>
-            <button
-              type="button"
-              className="hidden rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800 md:inline-flex"
-            >
-              Quick search
-            </button>
           </div>
           <div className="flex items-center gap-2">
             <Link
               href="/me/posts"
-              className="inline-flex shrink-0 rounded-xl border border-slate-200 bg-white px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 sm:px-3"
+              className="inline-flex shrink-0 rounded-xl border border-[#d7e2d9] bg-[#f7f4ec] px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-[#efeadf] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 sm:px-3"
             >
               <span className="sm:hidden">Posts</span>
               <span className="hidden sm:inline">My posts</span>
             </Link>
-            <button
+            {/* <button
               type="button"
-              className="hidden h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm dark:border-slate-600 dark:bg-slate-800 sm:inline-flex"
+              className="hidden h-9 w-9 items-center justify-center rounded-xl border border-[#d7e2d9] bg-[#f7f4ec] text-sm dark:border-slate-600 dark:bg-slate-800 sm:inline-flex"
               title="Messages"
             >
               💬
             </button>
             <button
               type="button"
-              className="hidden h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-white text-sm dark:border-slate-600 dark:bg-slate-800 sm:inline-flex"
+              className="hidden h-9 w-9 items-center justify-center rounded-xl border border-[#d7e2d9] bg-[#f7f4ec] text-sm dark:border-slate-600 dark:bg-slate-800 sm:inline-flex"
               title="Notifications"
             >
               🔔
-            </button>
+            </button> */}
             <button
               type="button"
-              className="ml-1 flex max-w-[220px] items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              className="ml-1 flex max-w-[220px] items-center gap-2 rounded-xl border border-[#d7e2d9] bg-[#f7f4ec] px-2 py-1.5 text-left text-sm font-medium text-slate-700 hover:bg-[#efeadf] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               title="Profile and settings"
               onClick={() => setShowProfileSettings(true)}
             >
@@ -619,6 +793,7 @@ export default function ChatApp() {
           currentUsername={currentUsername}
           users={users}
           extraUnreadByRoom={extraUnreadByRoom}
+          searchQuery={chatSearchQuery}
           onSelectRoom={(id) => {
             setExtraUnreadByRoom((p) => ({ ...p, [id]: 0 }));
             setActiveRoomId(id);
@@ -655,25 +830,53 @@ export default function ChatApp() {
           onDismissNotice={() => setChatNotice("")}
           onMarkRead={markRoomAsRead}
           onClose={() => setActiveRoomId("")}
-          onSend={async (content) => {
+          onSend={async (content, parentMessageId) => {
             if (!activeRoomId) return;
+            const parentMessage =
+              parentMessageId != null
+                ? messages.find((m) => String(m.id) === String(parentMessageId))
+                : undefined;
             const optimistic: ChatMessage = {
               id: `temp-${Date.now()}`,
               roomId: activeRoomId,
               sender: currentUsername ?? "You",
               senderId: currentUserId ?? undefined,
               content,
+              parentMessageId: parentMessageId ?? undefined,
+              parentMessage: parentMessage
+                ? {
+                    id: String(parentMessage.id),
+                    sender: parentMessage.sender,
+                    content: parentMessage.content,
+                  }
+                : undefined,
               createdAt: new Date().toISOString(),
               mine: true,
               pending: true,
             };
             setMessages((prev) => [...prev, optimistic]);
             try {
-              const sent = await chatApi.sendMessage(token, activeRoomId, content);
+              const sent = await chatApi.sendMessage(
+                token,
+                activeRoomId,
+                content,
+                parentMessageId
+              );
               if (sent) {
                 setMessages((prev) =>
                   dedupeMessagesKeepFirst(
-                    prev.map((m) => (m.id === optimistic.id ? { ...sent, mine: true } : m))
+                    prev.map((m) =>
+                      m.id === optimistic.id
+                        ? {
+                            ...sent,
+                            mine: true,
+                            parentMessageId:
+                              sent.parentMessageId ?? optimistic.parentMessageId,
+                            parentMessage:
+                              sent.parentMessage ?? optimistic.parentMessage,
+                          }
+                        : m
+                    )
                   )
                 );
               } else {
@@ -710,23 +913,117 @@ export default function ChatApp() {
           }}
           onReact={async (messageId, emoji) => {
             const prevMessages = messages;
+            const target = prevMessages.find((m) => m.id === messageId);
+            const prevMine = target?.myReaction;
+            const reqSeq = (reactionReqSeqRef.current[messageId] ?? 0) + 1;
+            reactionReqSeqRef.current[messageId] = reqSeq;
+
+            // Optimistic reaction update: instant toggle/replace in UI.
             setMessages((prev) =>
               prev.map((m) => {
                 if (m.id !== messageId) return m;
                 const nextMap = { ...(m.reactions ?? {}) };
-                const prevMine = m.myReaction;
-                if (prevMine) {
-                  nextMap[prevMine] = Math.max(0, (nextMap[prevMine] ?? 1) - 1);
-                  if (nextMap[prevMine] === 0) delete nextMap[prevMine];
+                const nextUsers = { ...(m.reactionUsers ?? {}) };
+                const mine = m.myReaction;
+                const selfKey = currentUserId != null ? String(currentUserId) : null;
+
+                if (mine) {
+                  nextMap[mine] = Math.max(0, (nextMap[mine] ?? 1) - 1);
+                  if (nextMap[mine] === 0) delete nextMap[mine];
+                  if (selfKey) {
+                    const users = (nextUsers[mine] ?? []).filter((u) => u !== selfKey);
+                    if (users.length > 0) nextUsers[mine] = users;
+                    else delete nextUsers[mine];
+                  }
                 }
-                nextMap[emoji] = (nextMap[emoji] ?? 0) + (prevMine === emoji ? 0 : 1);
-                return { ...m, reactions: nextMap, myReaction: emoji };
+
+                if (mine === emoji) {
+                  return {
+                    ...m,
+                    reactions: Object.keys(nextMap).length > 0 ? nextMap : undefined,
+                    reactionUsers: Object.keys(nextUsers).length > 0 ? nextUsers : undefined,
+                    myReaction: undefined,
+                  };
+                }
+
+                nextMap[emoji] = (nextMap[emoji] ?? 0) + 1;
+                if (selfKey) {
+                  const users = nextUsers[emoji] ?? [];
+                  if (!users.includes(selfKey)) nextUsers[emoji] = [...users, selfKey];
+                }
+                return {
+                  ...m,
+                  reactions: nextMap,
+                  reactionUsers: Object.keys(nextUsers).length > 0 ? nextUsers : undefined,
+                  myReaction: emoji,
+                };
               })
             );
+
             try {
-              await chatApi.reactToMessage(token, messageId, emoji);
+              let updated:
+                | {
+                    reactions?: Record<string, number>;
+                    reactionUsers?: Record<string, string[]>;
+                    myReaction?: string | null;
+                  }
+                | null = null;
+
+              if (prevMine === emoji) {
+                const removed = await chatApi.unreactToMessage(token, messageId, emoji);
+                if (!removed) {
+                  throw new Error("Could not remove reaction.");
+                }
+              } else if (prevMine) {
+                const removedPrev = await chatApi.unreactToMessage(
+                  token,
+                  messageId,
+                  prevMine
+                );
+                if (!removedPrev) {
+                  throw new Error("Could not replace reaction.");
+                }
+                updated = await chatApi.reactToMessage(token, messageId, emoji);
+              } else {
+                updated = await chatApi.reactToMessage(token, messageId, emoji);
+              }
+
+              // Ignore stale responses when user clicks quickly.
+              if ((reactionReqSeqRef.current[messageId] ?? 0) !== reqSeq) return;
+              if (
+                updated &&
+                (updated.reactions ||
+                  updated.reactionUsers ||
+                  typeof updated.myReaction !== "undefined")
+              ) {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === messageId
+                      ? {
+                          ...m,
+                          reactions:
+                            typeof updated.reactions !== "undefined"
+                              ? updated.reactions
+                              : m.reactions,
+                          reactionUsers:
+                            typeof updated.reactionUsers !== "undefined"
+                              ? updated.reactionUsers
+                              : m.reactionUsers,
+                          myReaction:
+                            typeof updated.myReaction !== "undefined"
+                              ? updated.myReaction ?? undefined
+                              : m.myReaction,
+                        }
+                      : m
+                  )
+                );
+              } else {
+                await refreshHistory();
+              }
             } catch (err) {
-              setMessages(prevMessages);
+              if ((reactionReqSeqRef.current[messageId] ?? 0) === reqSeq) {
+                setMessages(prevMessages);
+              }
               handleApiError(err, "Failed to react to message.");
             }
           }}

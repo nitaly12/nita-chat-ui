@@ -5,6 +5,14 @@ export type ChatMessage = {
   sender: string;
   content: string;
   createdAt: string;
+  /** Parent message id when this message is a reply. */
+  parentMessageId?: string;
+  /** Optional quoted parent content for reply rendering. */
+  parentMessage?: {
+    id: string;
+    sender?: string;
+    content?: string;
+  };
   /** Message kind when API distinguishes (e.g. text vs voice). */
   type?: string;
   mine?: boolean;
@@ -31,6 +39,8 @@ export type ChatMessage = {
   voiceDeliveryPhase?: "uploading" | "sending";
   /** Emoji -> count map */
   reactions?: Record<string, number>;
+  /** Emoji -> user ids/usernames that reacted (when available). */
+  reactionUsers?: Record<string, string[]>;
   /** Current user's own reaction, if any */
   myReaction?: string;
 };

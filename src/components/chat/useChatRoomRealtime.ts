@@ -20,6 +20,14 @@ const WS_URL = `${WS_BASE}/ws-chat`;
 
 type Handlers = {
   onRoomMessage?: (message: ChatMessage) => void;
+  onRoomReactionEvent?: (event: {
+    action?: string;
+    messageId?: string | number;
+    roomId?: string | number;
+    emoji?: string;
+    userId?: string | number;
+    username?: string;
+  }) => void;
   onTypingUsers?: (usernames: string[]) => void;
 };
 
@@ -28,7 +36,11 @@ export function useChatRoomRealtime(
   roomId: string | null,
   currentUsername: string | null,
   handlers: Handlers
-): { sendTypingPing: () => void; typingUsers: string[] } {
+): {
+  sendTypingPing: () => void;
+  sendMessagePayload: (content: string, parentMessageId?: string) => void;
+  typingUsers: string[];
+} {
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const clientRef = useRef<Client | null>(null);
@@ -94,7 +106,27 @@ export function useChatRoomRealtime(
 
         client.subscribe(`/topic/room/${roomId}`, (frame: IMessage) => {
           try {
-            const msg = normalizeMessageBody(JSON.parse(frame.body) as unknown);
+            const raw = JSON.parse(frame.body) as unknown;
+            if (raw && typeof raw === "object") {
+              const r = raw as Record<string, unknown>;
+              const looksLikeReactionEvent =
+                (typeof r.action === "string" || typeof r.emoji === "string") &&
+                (typeof r.messageId !== "undefined" || typeof r.message_id !== "undefined");
+              if (looksLikeReactionEvent) {
+                handlersRef.current.onRoomReactionEvent?.({
+                  action: typeof r.action === "string" ? r.action : undefined,
+                  messageId: (r.messageId ?? r.message_id) as string | number | undefined,
+                  roomId: (r.roomId ?? r.room_id) as string | number | undefined,
+                  emoji: typeof r.emoji === "string" ? r.emoji : undefined,
+                  userId: (r.userId ?? r.user_id) as string | number | undefined,
+                  username:
+                    (typeof r.username === "string" && r.username) ||
+                    (typeof r.sender === "string" ? r.sender : undefined),
+                });
+                return;
+              }
+            }
+            const msg = normalizeMessageBody(raw);
             handlersRef.current.onRoomMessage?.({ ...msg, roomId: msg.roomId || roomId });
           } catch {
             /* ignore */
@@ -125,5 +157,22 @@ export function useChatRoomRealtime(
     });
   }, [roomId, currentUsername]);
 
-  return { sendTypingPing, typingUsers };
+  const sendMessagePayload = useCallback(
+    (content: string, parentMessageId?: string) => {
+      const client = clientRef.current;
+      if (!client?.connected || !roomId) return;
+      client.publish({
+        destination: `/app/chat.send/${roomId}`,
+        body: JSON.stringify({
+          roomId,
+          content,
+          message: content,
+          parentMessageId: parentMessageId?.trim() || undefined,
+        }),
+      });
+    },
+    [roomId]
+  );
+
+  return { sendTypingPing, sendMessagePayload, typingUsers };
 }

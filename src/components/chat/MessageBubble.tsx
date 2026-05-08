@@ -22,13 +22,16 @@ type MessageBubbleProps = {
   displaySender: string;
   currentUserId?: string | null;
   currentUsername?: string | null;
-  onEdit: (messageId: string, content: string) => Promise<void>;
   onDelete: (messageId: string) => Promise<void>;
   onReact: (messageId: string, emoji: string) => Promise<void>;
+  onReply: (message: ChatMessage) => void;
+  onRequestEdit: (message: ChatMessage) => void;
 };
 
 const formatShortTime = (iso: string): string =>
   new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+const QUICK_REACTIONS = ["👍", "❤️", "😆", "😮", "😢", "😡"] as const;
 
 /** Hide voice metadata JSON if the server still stores it in `content`. */
 function isVoiceJsonContent(text: string): boolean {
@@ -163,16 +166,18 @@ export default function MessageBubble({
   displaySender,
   currentUserId,
   currentUsername,
-  onEdit,
   onDelete,
   onReact,
+  onReply,
+  onRequestEdit,
 }: MessageBubbleProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState(message.content);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   useEffect(() => {
-    setDraft(message.content);
-  }, [message.content, message.id]);
+    setMenuOpen(false);
+  }, [message.id]);
 
   const rawVoiceUrl =
     (message.mediaUrl && message.mediaUrl.trim().length > 0 ? message.mediaUrl : undefined) ??
@@ -192,6 +197,25 @@ export default function MessageBubble({
         urlLooksLikeAudio ||
         (message.mediaType === "file" && looksLikeAudioFile))
   );
+  const renderReplyHeader = () => {
+    if (!message.parentMessage) return null;
+    const quotedSender = message.parentMessage.sender?.trim() || "Reply";
+    const quotedContent = message.parentMessage.content?.trim() || "Attachment";
+    return (
+      <div
+        className={`mb-1 rounded border-l-2 border-white/50 bg-white/10 p-2 ${
+          isMine ? "text-white/95" : "text-slate-700 ring-1 ring-slate-200/70"
+        }`}
+      >
+        <p className={`text-[11px] font-semibold ${isMine ? "text-white" : "text-slate-800"}`}>
+          {quotedSender}
+        </p>
+        <p className={`truncate text-xs ${isMine ? "text-white/90" : "text-slate-600"}`}>
+          {quotedContent}
+        </p>
+      </div>
+    );
+  };
 
   const receiptPhase = getReceiptPhase(message, isMine, currentUserId, currentUsername);
   const pendingStatusLabel =
@@ -210,28 +234,115 @@ export default function MessageBubble({
 
   return (
     <div className={`group relative mb-6 flex w-full ${isMine ? "justify-end" : "justify-start"}`}>
+      {confirmDeleteOpen ? (
+        <div
+          className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-[1px]"
+          role="presentation"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !deleteBusy) setConfirmDeleteOpen(false);
+          }}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Delete message confirmation"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">
+              Delete this message?
+            </h3>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              This action cannot be undone.
+            </p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                disabled={deleteBusy}
+                onClick={() => setConfirmDeleteOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="rounded-xl bg-red-600 px-3 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 dark:bg-red-500 dark:hover:bg-red-600"
+                disabled={deleteBusy}
+                onClick={async () => {
+                  setDeleteBusy(true);
+                  try {
+                    await onDelete(message.id);
+                    setConfirmDeleteOpen(false);
+                  } finally {
+                    setDeleteBusy(false);
+                  }
+                }}
+              >
+                {deleteBusy ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       
       {/* 1. HOVER ACTIONS: Positioned outside the bubble to reduce clutter */}
-      {!isEditing && isMine && message.mediaType !== "voice" && (
-        <div className="absolute -top-8 right-2 flex items-center gap-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-          <button
-            onClick={() => setIsEditing(true)}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-800 dark:ring-slate-700"
-            title="Edit"
+      <div
+        className={`absolute -top-8 z-20 flex items-center gap-1 opacity-0 transition-opacity duration-200 group-hover:opacity-100 ${
+          isMine ? "right-2" : "left-2"
+        }`}
+      >
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-800 dark:ring-slate-700"
+          title="Message actions"
+          aria-label="Message actions"
+        >
+          <span className="text-xs">⋯</span>
+        </button>
+        {menuOpen ? (
+          <div
+            className={`absolute top-8 min-w-[120px] overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-xs shadow-lg dark:border-slate-700 dark:bg-slate-800 ${
+              isMine ? "right-0" : "left-0"
+            }`}
           >
-            <span className="text-xs">✏️</span>
-          </button>
-          <button
-            onClick={() => {
-              if (window.confirm("Delete this message?")) void onDelete(message.id);
-            }}
-            className="flex h-7 w-7 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-slate-200 hover:bg-red-50 dark:bg-slate-800 dark:ring-slate-700"
-            title="Delete"
-          >
-            <span className="text-xs text-red-500">🗑️</span>
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              className="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+              onClick={() => {
+                onReply(message);
+                setMenuOpen(false);
+              }}
+            >
+              Reply
+            </button>
+            {isMine && message.mediaType !== "voice" ? (
+              <>
+                <button
+                  type="button"
+                  className="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+                  onClick={() => {
+                    onRequestEdit(message);
+                    setMenuOpen(false);
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setConfirmDeleteOpen(true);
+                  }}
+                >
+                  Delete
+                </button>
+              </>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
 
       <div className={`relative flex flex-col ${isMine ? "items-end" : "items-start"}`}>
         {/* Sender Name */}
@@ -248,36 +359,9 @@ export default function MessageBubble({
               : "rounded-2xl rounded-tl-none bg-white text-slate-900 shadow-sm ring-1 ring-slate-100"
           }`}
         >
-          {/* 2. EDITING STATE */}
-          {isEditing ? (
-            <div className="min-w-[200px] space-y-2">
-              <textarea
-                className="w-full rounded-lg border-none bg-black/10 p-2 text-white placeholder:text-white/50 focus:ring-1 focus:ring-white/30"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                rows={2}
-                autoFocus
-              />
-              <div className="flex justify-end gap-2">
-                <button
-                  className="rounded-full bg-white/20 px-3 py-1 text-[10px] font-bold uppercase tracking-wider hover:bg-white/30"
-                  onClick={() => setIsEditing(false)}
-                >
-                  Cancel
-                </button>
-                <button
-                  className="rounded-full bg-white px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-blue-600 hover:bg-blue-50"
-                  onClick={async () => {
-                    await onEdit(message.id, draft.trim());
-                    setIsEditing(false);
-                  }}
-                >
-                  Save
-                </button>
-              </div>
-            </div>
-          ) : (
             <>
+              {message.parentMessage ? renderReplyHeader() : null}
+
               {/* Message Content (never show raw voice JSON — player handles it) */}
               {message.content &&
               !showVoicePlayer &&
@@ -362,35 +446,58 @@ export default function MessageBubble({
                 ) : null}
               </div>
             </>
-          )}
 
           {/* 3. REACTION BADGES: Floating at the bottom edge */}
-          {!isEditing && (
-            <div className="absolute -bottom-3 left-2 flex flex-wrap gap-1">
+          <div className="absolute -bottom-3 left-2 flex flex-wrap gap-1">
               {(Object.entries(message.reactions ?? {}) as Array<[string, number]>).map(([emoji, count]) => (
-                <button
-                  key={emoji}
-                  onClick={() => void onReact(message.id, emoji)}
-                  className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] shadow-sm ring-1 transition-all hover:scale-110 ${
-                    message.myReaction === emoji
-                      ? "bg-amber-100 ring-amber-300"
-                      : "bg-white ring-slate-200 dark:bg-slate-800 dark:ring-slate-700"
-                  }`}
-                >
-                  <span className="text-slate-900">{emoji}</span>
-                  <span className="font-bold text-slate-600">{count}</span>
-                </button>
+                (() => {
+                  const currentUserKey = currentUserId != null ? String(currentUserId) : null;
+                  const currentUsernameKey = currentUsername?.trim().toLowerCase() ?? "";
+                  const reactedUsers = message.reactionUsers?.[emoji] ?? [];
+                  const reactedByMe =
+                    (currentUserKey != null && reactedUsers.includes(currentUserKey)) ||
+                    (currentUsernameKey.length > 0 &&
+                      reactedUsers.some((u) => u.trim().toLowerCase() === currentUsernameKey)) ||
+                    message.myReaction === emoji;
+                  return (
+                    <button
+                      key={emoji}
+                      onClick={() => void onReact(message.id, emoji)}
+                      className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] shadow-sm transition-all hover:scale-110 ${
+                        reactedByMe
+                          ? "border-blue-500 bg-blue-100"
+                          : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-800"
+                      }`}
+                    >
+                      <span className="text-slate-900">{emoji}</span>
+                      <span className="font-bold text-slate-600">{count}</span>
+                    </button>
+                  );
+                })()
               ))}
               
-              {/* Quick Add Reaction Button: Visible on Hover */}
-              <button
-                onClick={() => void onReact(message.id, "👍")}
-                className="flex h-5 items-center justify-center rounded-full bg-white px-2 text-[10px] opacity-0 shadow-sm ring-1 ring-slate-200 transition-opacity group-hover:opacity-100 dark:bg-slate-800 dark:ring-slate-700"
+              {/* Quick reaction picker: visible on hover */}
+              <div
+                className={`pointer-events-none absolute -top-13 z-10 rounded-full bg-white/95 p-1 shadow-lg ring-1 ring-slate-200 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:opacity-100 dark:bg-slate-800/95 dark:ring-slate-700 ${
+                  isMine ? "right-0" : "left-0"
+                }`}
               >
-                +😊
-              </button>
-            </div>
-          )}
+                <div className="flex items-center gap-1">
+                  {QUICK_REACTIONS.map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => void onReact(message.id, emoji)}
+                      className="flex h-8 w-8 items-center justify-center rounded-full text-lg transition-transform hover:scale-115"
+                      title={`React ${emoji}`}
+                      aria-label={`React ${emoji}`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
+          </div>
         </div>
       </div>
     </div>

@@ -13,25 +13,27 @@ export default function MyPostsPage() {
 
   if (!token) {
     return (
-      <div className="min-h-screen bg-[var(--background)] p-8 text-[var(--foreground)]">
-        <p className="text-slate-600 dark:text-slate-400">You need to be signed in.</p>
-        <Link href="/" className="mt-4 inline-block text-blue-600 hover:underline dark:text-blue-400">
-          ← Back to messages
-        </Link>
+      <div className="min-h-screen bg-gradient-to-br from-[#e8efe8] via-[#f2ede6] to-[#e3ecf5] p-8 text-[var(--foreground)] dark:from-slate-950 dark:via-slate-900 dark:to-slate-900">
+        <div className="mx-auto max-w-3xl rounded-3xl border border-[var(--feed-border)] bg-[var(--feed-surface)] p-8 shadow-sm">
+          <p className="text-slate-600 dark:text-slate-400">You need to be signed in.</p>
+          <Link href="/" className="mt-4 inline-block text-blue-600 hover:underline dark:text-blue-400">
+            ← Back to messages
+          </Link>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen w-full bg-[var(--background)] text-[var(--foreground)]">
-      <div className="w-full px-4 py-6 sm:px-6 lg:px-8 xl:px-10 2xl:px-14">
+    <div className="min-h-screen w-full bg-gradient-to-br from-[#e8efe8] via-[#f2ede6] to-[#e3ecf5] text-[var(--foreground)] dark:from-slate-950 dark:via-slate-900 dark:to-slate-900">
+      <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8 xl:px-10 2xl:px-14">
         <Link
           href="/"
-          className="inline-flex text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+          className="inline-flex rounded-xl border border-[var(--feed-border)] bg-[var(--feed-surface)] px-3 py-2 text-sm font-medium text-blue-600 shadow-sm transition hover:bg-[var(--feed-muted)] hover:underline dark:text-blue-400"
         >
           ← Back to messages
         </Link>
-        <header className="mt-6 border-b border-[color-mix(in_srgb,var(--foreground)_8%,transparent)] pb-6">
+        <header className="mt-6 rounded-3xl border border-[var(--feed-border)] bg-[var(--feed-surface)] px-6 py-6 shadow-sm sm:px-8">
           <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">My posts</h1>
           <p className="mt-2 max-w-2xl text-sm text-[var(--feed-placeholder)] sm:text-base">
             Create posts and manage what you have shared.

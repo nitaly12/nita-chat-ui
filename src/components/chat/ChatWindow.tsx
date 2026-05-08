@@ -26,7 +26,7 @@ type ChatWindowProps = {
   onDismissNotice: () => void;
   /** Called after opening a room (debounced) to sync read receipts server-side if supported */
   onMarkRead: () => void;
-  onSend: (content: string) => Promise<void>;
+  onSend: (content: string, parentMessageId?: string) => Promise<void>;
   onEdit: (messageId: string, content: string) => Promise<void>;
   onDelete: (messageId: string) => Promise<void>;
   onReact: (messageId: string, emoji: string) => Promise<void>;
@@ -67,7 +67,9 @@ export default function ChatWindow({
   const [nicknameDraft, setNicknameDraft] = useState("");
   const [theme, setTheme] = useState<"default" | "warm" | "dark">("default");
   const [inviteUserId, setInviteUserId] = useState("");
-  const [membersOpen, setMembersOpen] = useState(true);
+  const [membersOpen, setMembersOpen] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const typingThrottleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voice = useVoiceRecorder();
@@ -102,6 +104,11 @@ export default function ChatWindow({
     return () => window.clearTimeout(t);
   }, [activeChat?.id, onMarkRead]);
 
+  useEffect(() => {
+    setReplyingTo(null);
+    setEditingMessage(null);
+  }, [activeChat?.id]);
+
   const typingLabel =
     typingUsers.length === 0
       ? null
@@ -116,6 +123,11 @@ export default function ChatWindow({
           const text = `${m.sender} ${m.content}`.toLowerCase();
           return text.includes(normalizedQuery);
         });
+  const messageById = useMemo(() => {
+    const map = new Map<string, ChatMessage>();
+    for (const m of messages) map.set(String(m.id), m);
+    return map;
+  }, [messages]);
   const themeClass =
     theme === "dark"
       ? "bg-slate-900 text-slate-100"
@@ -431,24 +443,46 @@ export default function ChatWindow({
         )}
       </header>
 
-      <section className={`min-h-0 flex-1 space-y-4 overflow-y-auto p-6 ${sectionClass}`}>
+      <section className={`min-h-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto p-6 ${sectionClass}`}>
         {filteredMessages.map((message, index) => {
+          const resolvedParent =
+            message.parentMessage ??
+            (message.parentMessageId
+              ? (() => {
+                  const p = messageById.get(String(message.parentMessageId));
+                  if (!p) return undefined;
+                  return {
+                    id: String(p.id),
+                    sender: p.sender,
+                    content: p.content,
+                  };
+                })()
+              : undefined);
+          const withResolvedParent =
+            resolvedParent && !message.parentMessage
+              ? { ...message, parentMessage: resolvedParent }
+              : message;
           const isMine =
-            (currentUserId && message.senderId === currentUserId) ||
-            (currentUsername && message.sender === currentUsername) ||
-            Boolean(message.mine);
-          const senderLabel = isMine ? "You" : message.sender;
+            (currentUserId && withResolvedParent.senderId === currentUserId) ||
+            (currentUsername && withResolvedParent.sender === currentUsername) ||
+            Boolean(withResolvedParent.mine);
+          const senderLabel = isMine ? "You" : withResolvedParent.sender;
           return (
             <MessageBubble
-              key={`${message.id}-${message.createdAt}-${index}`}
-              message={message}
+              key={`${withResolvedParent.id}-${withResolvedParent.createdAt}-${index}`}
+              message={withResolvedParent}
               isMine={Boolean(isMine)}
               displaySender={senderLabel}
               currentUserId={currentUserId}
               currentUsername={currentUsername}
-              onEdit={onEdit}
               onDelete={onDelete}
               onReact={onReact}
+              onReply={(msg) => setReplyingTo(msg)}
+              onRequestEdit={(msg) => {
+                setEditingMessage(msg);
+                setReplyingTo(null);
+                setDraft(msg.content ?? "");
+              }}
             />
           );
         })}
@@ -530,15 +564,71 @@ export default function ChatWindow({
               </div>
             ) : (
               <form
-                className="flex items-center gap-2 rounded-2xl border border-blue-300 bg-white p-2 shadow-sm"
+                className="flex flex-col gap-2 rounded-2xl border border-blue-300 bg-white p-2 shadow-sm"
                 onSubmit={async (e) => {
                   e.preventDefault();
                   const content = draft.trim();
                   if (!content) return;
+                  if (editingMessage) {
+                    await onEdit(editingMessage.id, content);
+                    setEditingMessage(null);
+                    setDraft("");
+                    return;
+                  }
+                  const parentMessageId = replyingTo?.id;
                   setDraft("");
-                  await onSend(content);
+                  await onSend(content, parentMessageId);
+                  setReplyingTo(null);
                 }}
               >
+                {editingMessage ? (
+                  <div className="mb-2 w-full rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 text-xs text-slate-700">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-amber-700">Editing message</p>
+                        <p className="truncate text-slate-600">
+                          {(editingMessage.content || "").trim() || "Attachment"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded-md px-1.5 py-0.5 text-slate-500 hover:bg-amber-100 hover:text-slate-700"
+                        onClick={() => {
+                          setEditingMessage(null);
+                          setDraft("");
+                        }}
+                        aria-label="Cancel edit"
+                        title="Cancel edit"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                {replyingTo ? (
+                  <div className="mb-2 w-full rounded-xl border border-blue-200 bg-blue-50/70 px-3 py-2 text-xs text-slate-700">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-blue-700">
+                          Replying to {replyingTo.sender || "Message"}
+                        </p>
+                        <p className="truncate text-slate-600">
+                          {(replyingTo.content || "").trim() || "Attachment"}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="rounded-md px-1.5 py-0.5 text-slate-500 hover:bg-blue-100 hover:text-slate-700"
+                        onClick={() => setReplyingTo(null)}
+                        aria-label="Cancel reply"
+                        title="Cancel reply"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="flex w-full items-center gap-2">
                 <label className="inline-flex cursor-pointer items-center rounded-xl bg-slate-100 px-3 py-3 text-xs text-slate-700 hover:bg-slate-200">
                   📎
                   <input
@@ -570,8 +660,9 @@ export default function ChatWindow({
                   className="rounded-xl bg-gradient-to-b from-blue-500 to-blue-700 px-5 py-2.5 text-sm font-semibold text-white shadow hover:from-blue-600 hover:to-blue-700"
                   type="submit"
                 >
-                  Send
+                  {editingMessage ? "Save" : "Send"}
                 </button>
+                </div>
               </form>
             )}
           </div>

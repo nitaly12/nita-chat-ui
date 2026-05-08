@@ -162,10 +162,10 @@ export default function MyProfileFeed({ token, className = "" }: MyProfileFeedPr
 
   return (
     <section className={`w-full ${className}`}>
-      <div className="grid w-full gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(280px,22rem)] xl:gap-10 xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <div className="grid w-full gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(300px,23rem)] xl:gap-8 xl:grid-cols-[minmax(0,1fr)_24rem]">
         <div className="order-1 lg:order-2 lg:sticky lg:top-6 lg:self-start">
           <CreatePostCard token={token} onPosted={() => void loadPosts()} />
-          <div className="mt-4 rounded-2xl border border-[var(--feed-border)] bg-[var(--feed-surface)] p-4">
+          <div className="mt-4 rounded-3xl border border-[var(--feed-border)] bg-[var(--feed-surface)] p-5 shadow-sm">
             <p className="text-sm font-semibold text-[var(--foreground)]">Tips</p>
             <ul className="mt-2 space-y-1 text-sm text-[var(--feed-placeholder)]">
               <li>Keep posts short and clear.</li>
@@ -176,7 +176,7 @@ export default function MyProfileFeed({ token, className = "" }: MyProfileFeedPr
         </div>
 
       <div className="order-2 min-w-0 lg:order-1">
-        <div className="flex items-end justify-between gap-3">
+        <div className="flex items-end justify-between gap-3 rounded-3xl border border-[var(--feed-border)] bg-[var(--feed-surface)] px-5 py-4 shadow-sm sm:px-6">
           <div>
             <h2 className="text-xl font-bold tracking-tight text-[var(--foreground)]">Your posts</h2>
             <p className="mt-0.5 text-sm text-[var(--feed-placeholder)]">
@@ -186,22 +186,22 @@ export default function MyProfileFeed({ token, className = "" }: MyProfileFeedPr
           <button
             type="button"
             onClick={() => void loadPosts()}
-            className="rounded-xl border border-[var(--feed-border)] bg-[var(--feed-surface)] px-3 py-2 text-xs font-semibold text-[var(--foreground)] shadow-sm hover:bg-[var(--feed-muted)]"
+            className="rounded-xl border border-[var(--feed-border)] bg-[var(--feed-muted)] px-3 py-2 text-xs font-semibold text-[var(--foreground)] shadow-sm transition hover:bg-[var(--feed-surface)]"
           >
             Refresh
           </button>
         </div>
         {loading ? (
-          <div className="mt-4 space-y-3">
+          <div className="mt-5 space-y-3">
             <div className="h-28 rounded-2xl border border-[var(--feed-border)] bg-[var(--feed-muted)]" />
             <div className="h-28 rounded-2xl border border-[var(--feed-border)] bg-[var(--feed-muted)]" />
           </div>
         ) : error ? (
-          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+          <p className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
             {error}
           </p>
         ) : posts.length === 0 ? (
-          <div className="mt-4 rounded-2xl border border-[var(--feed-border)] bg-[var(--feed-surface)] p-6 text-center">
+          <div className="mt-5 rounded-3xl border border-[var(--feed-border)] bg-[var(--feed-surface)] p-7 text-center shadow-sm">
             <p className="text-sm font-semibold text-[var(--foreground)]">No posts yet</p>
             <p className="mt-1 text-sm text-[var(--feed-placeholder)]">
               Use the composer to publish your first update.
@@ -255,20 +255,58 @@ export default function MyProfileFeed({ token, className = "" }: MyProfileFeedPr
                           <button
                             type="button"
                             onClick={() => startEdit(post)}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--feed-border)] bg-[var(--feed-surface)] text-sm text-[var(--foreground)] hover:bg-[var(--feed-muted)]"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--feed-border)] bg-[var(--feed-surface)] text-slate-500 transition hover:border-blue-300 hover:bg-blue-50 hover:text-blue-600 dark:text-slate-300 dark:hover:border-blue-500/40 dark:hover:bg-blue-950/30 dark:hover:text-blue-300"
                             title="Edit"
                             aria-label="Edit post"
                           >
-                            ✏️
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+                              <path
+                                d="M4 15.5V20h4.5L19 9.5 14.5 5 4 15.5Z"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinejoin="round"
+                              />
+                              <path
+                                d="M12.9 6.6 17.4 11.1"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                              />
+                            </svg>
                           </button>
                           <button
                             type="button"
                             onClick={() => void removePost(post.id)}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--feed-border)] bg-[var(--feed-surface)] text-sm text-[var(--foreground)] hover:bg-red-50 dark:hover:bg-red-950/40"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-[var(--feed-border)] bg-[var(--feed-surface)] text-slate-500 transition hover:border-red-300 hover:bg-red-50 hover:text-red-600 dark:text-slate-300 dark:hover:border-red-500/40 dark:hover:bg-red-950/30 dark:hover:text-red-300"
                             title="Delete"
                             aria-label="Delete post"
                           >
-                            🗑️
+                            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" aria-hidden>
+                              <path
+                                d="M5 7h14"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                              />
+                              <path
+                                d="M9.5 7V5.8A1.8 1.8 0 0 1 11.3 4h1.4a1.8 1.8 0 0 1 1.8 1.8V7"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                              />
+                              <path
+                                d="M8 7l.7 11.2c.05.92.8 1.8 1.8 1.8h3c1 0 1.75-.88 1.8-1.8L16 7"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinejoin="round"
+                              />
+                              <path
+                                d="M10.6 10.2v6.2M13.4 10.2v6.2"
+                                stroke="currentColor"
+                                strokeWidth="1.8"
+                                strokeLinecap="round"
+                              />
+                            </svg>
                           </button>
                         </>
                       )}

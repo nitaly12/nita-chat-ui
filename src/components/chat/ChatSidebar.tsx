@@ -15,6 +15,8 @@ type ChatSidebarProps = {
   users: UserSummary[];
   /** Extra unread bumps when last preview changes (non-active rooms). */
   extraUnreadByRoom: Record<string, number>;
+  /** Filters chat list by room name and last message preview. */
+  searchQuery?: string;
   onSelectRoom: (roomId: string) => void;
   onStartPrivateChat: (userId: string) => void;
   onCreateGroup: () => void;
@@ -52,11 +54,21 @@ export default function ChatSidebar({
   currentUsername,
   users,
   extraUnreadByRoom,
+  searchQuery,
   onSelectRoom,
   onStartPrivateChat,
   onCreateGroup,
   onLogout,
 }: ChatSidebarProps) {
+  const normalizedQuery = (searchQuery ?? "").trim().toLowerCase();
+  const filteredChats =
+    normalizedQuery.length === 0
+      ? chats
+      : chats.filter((chat) => {
+          const title = resolveChatName(chat, currentUsername, users).toLowerCase();
+          const preview = (chat.lastMessagePreview ?? "").toLowerCase();
+          return title.includes(normalizedQuery) || preview.includes(normalizedQuery);
+        });
   const totalUnread = chats.reduce(
     (sum, c) => sum + displayUnread(c, activeRoomId, extraUnreadByRoom),
     0
@@ -83,12 +95,12 @@ export default function ChatSidebar({
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Checkout your conversation</p>
       </div>
 
-      <div className="flex border-b border-slate-200 text-sm font-medium dark:border-slate-700">
+      {/* <div className="flex border-b border-slate-200 text-sm font-medium dark:border-slate-700">
         <button
           type="button"
           className="flex-1 border-b-2 border-blue-500 px-3 py-3 text-blue-600 dark:border-blue-400 dark:text-blue-400"
         >
-          All ({chats.length})
+          All ({filteredChats.length})
         </button>
         <button
           type="button"
@@ -96,7 +108,7 @@ export default function ChatSidebar({
         >
           Unread ({totalUnread})
         </button>
-      </div>
+      </div> */}
 
       <div className="border-b border-slate-200 p-3 dark:border-slate-700">
         <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
@@ -122,7 +134,7 @@ export default function ChatSidebar({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto divide-y divide-slate-200 dark:divide-slate-700">
-        {chats.map((chat) => {
+        {filteredChats.map((chat) => {
           const unread = displayUnread(chat, activeRoomId, extraUnreadByRoom);
           const online = resolveOtherOnline(chat, currentUsername, users);
           const title = resolveChatName(chat, currentUsername, users);
@@ -206,6 +218,11 @@ export default function ChatSidebar({
             </button>
           );
         })}
+        {filteredChats.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+            No chats match your search.
+          </div>
+        ) : null}
       </div>
 
       <div className="border-t border-slate-200 p-3 dark:border-slate-700">
