@@ -4,6 +4,8 @@ export type ChatMessage = {
   senderId?: string;
   sender: string;
   content: string;
+  /** Plain-text preview from API (e.g. for replies or list cells). */
+  contentSnippet?: string;
   createdAt: string;
   /** Parent message id when this message is a reply. */
   parentMessageId?: string;
@@ -12,6 +14,10 @@ export type ChatMessage = {
     id: string;
     sender?: string;
     content?: string;
+    /** Short preview for quoted reply strip (preferred over `content`). */
+    contentSnippet?: string;
+    mediaUrl?: string;
+    mediaType?: "image" | "voice" | "file";
   };
   /** Message kind when API distinguishes (e.g. text vs voice). */
   type?: string;
@@ -39,6 +45,8 @@ export type ChatMessage = {
   voiceDeliveryPhase?: "uploading" | "sending";
   /** Emoji -> count map */
   reactions?: Record<string, number>;
+  /** Server aggregate when sent (e.g. WebSocket `reactionSummary`); use for authoritative replace. */
+  reactionSummary?: Record<string, number>;
   /** Emoji -> user ids/usernames that reacted (when available). */
   reactionUsers?: Record<string, string[]>;
   /** Current user's own reaction, if any */

@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { chatApi, readAxiosErrorMessage } from "@/chat/api";
 
-const PICKER_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"] as const;
+/** Same set as chat quick reactions — pill picker (Messenger-style). */
+const PICKER_EMOJIS = ["👍", "❤️", "😆", "😮", "😢", "😡"] as const;
 
 export type PostInteractionBarProps = {
   token: string;
@@ -113,7 +114,7 @@ export default function PostInteractionBar({
         className="flex items-center gap-2 border-t border-white/15 pt-1"
         style={{ color: "var(--post-bar-text)" }}
       >
-        <div className="relative flex flex-1" ref={pickerRef}>
+        <div className="group/preact relative flex flex-1" ref={pickerRef}>
           <button
             type="button"
             disabled={busy !== null}
@@ -166,7 +167,9 @@ export default function PostInteractionBar({
               }
             }}
           >
-            <span className="text-base">{myReaction ?? "🙂"}</span>
+            <span className="text-lg leading-none" aria-hidden>
+              {myReaction ?? "🙂"}
+            </span>
             <span>React</span>
             {reactionCount > 0 ? (
               <span className="rounded-full bg-[var(--post-bar-hover)] px-1.5 py-0.5 text-xs font-bold tabular-nums">
@@ -174,24 +177,26 @@ export default function PostInteractionBar({
               </span>
             ) : null}
           </button>
-          {pickerOpen ? (
-            <div
-              className="absolute bottom-full left-1/2 z-20 mb-1 flex -translate-x-1/2 gap-1 rounded-xl border border-white/20 bg-black/85 px-2 py-2 shadow-xl backdrop-blur-sm"
-              role="listbox"
-              aria-label="Choose reaction"
-            >
-              {PICKER_EMOJIS.map((em) => (
-                <button
-                  key={em}
-                  type="button"
-                  className="flex h-10 w-10 items-center justify-center rounded-lg text-xl hover:bg-white/10"
-                  onClick={() => void handleEmojiPick(em)}
-                >
-                  {em}
-                </button>
-              ))}
-            </div>
-          ) : null}
+          <div
+            className={`absolute bottom-full left-1/2 z-20 mb-1 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-slate-200/90 bg-white px-2 py-1.5 shadow-[0_4px_24px_rgba(15,23,42,0.14)] ring-1 ring-black/[0.04] transition-opacity duration-150 ${
+              pickerOpen
+                ? "pointer-events-auto opacity-100"
+                : "pointer-events-none opacity-0 sm:pointer-events-none sm:opacity-0 sm:group-hover/preact:pointer-events-auto sm:group-hover/preact:opacity-100"
+            }`}
+            role="listbox"
+            aria-label="Choose reaction"
+          >
+            {PICKER_EMOJIS.map((em) => (
+              <button
+                key={em}
+                type="button"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl leading-none transition-transform hover:bg-slate-100 active:scale-90"
+                onClick={() => void handleEmojiPick(em)}
+              >
+                {em}
+              </button>
+            ))}
+          </div>
         </div>
 
         <button

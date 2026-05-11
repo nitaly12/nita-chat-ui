@@ -286,6 +286,180 @@ const parseReadByList = (raw: unknown): string[] => {
     .filter(Boolean);
 };
 
+const reactionUserListKeys = [
+  "userIds",
+  "user_ids",
+  "users",
+  "reactors",
+  "reactedBy",
+  "reacted_by",
+] as const;
+
+function parseUserIdsFromReactionEntry(usersRaw: unknown): string[] {
+  if (!Array.isArray(usersRaw)) return [];
+  return usersRaw
+    .map((u) => {
+      if (typeof u === "string" || typeof u === "number") return String(u);
+      if (!u || typeof u !== "object") return "";
+      const vv = u as Record<string, unknown>;
+      const id = vv.id ?? vv.userId ?? vv.user_id ?? vv.username ?? vv.userName;
+      return id != null ? String(id) : "";
+    })
+    .filter((x): x is string => x.trim().length > 0);
+}
+
+/**
+ * Normalizes server reaction payloads into `reactions` + `reactionUsers`.
+ * Supports (in order): `reactionSummary` / `reaction_summary`, `reactions` as a map,
+ * then `reactions` as an array of `{ emoji, count?, userIds? }`.
+ */
+function parseMessageReactionsFromDto(v: Record<string, unknown>): {
+  reactionMap: Record<string, number>;
+  reactionUsers: Record<string, string[]>;
+} {
+  const reactionMap: Record<string, number> = {};
+  const reactionUsers: Record<string, string[]> = {};
+
+  const setUsers = (emoji: string, users: string[]): void => {
+    const e = emoji.trim();
+    if (!e || users.length === 0) return;
+    reactionUsers[e] = Array.from(new Set([...(reactionUsers[e] ?? []), ...users]));
+  };
+
+  const setCount = (emoji: string, countRaw: unknown): void => {
+    const e = typeof emoji === "string" ? emoji.trim() : "";
+    if (!e) return;
+    const count =
+      typeof countRaw === "number" && Number.isFinite(countRaw)
+        ? Math.max(0, Math.floor(countRaw))
+        : typeof countRaw === "string" && /^\d+$/.test(countRaw.trim())
+          ? Math.max(0, Number(countRaw.trim()))
+          : 0;
+    if (count > 0) reactionMap[e] = count;
+    else delete reactionMap[e];
+  };
+
+  const applySummaryEntry = (emojiKey: string, val: unknown): void => {
+    const emoji = emojiKey.trim();
+    if (!emoji) return;
+    if (typeof val === "number" || (typeof val === "string" && /^\d+$/.test(val.trim()))) {
+      setCount(emoji, val);
+      return;
+    }
+    if (!val || typeof val !== "object" || Array.isArray(val)) return;
+    const o = val as Record<string, unknown>;
+    const cRaw = o.count ?? o.total ?? o.reactionsCount ?? o.reactionCount ?? o.reactions_count;
+    setCount(emoji, cRaw);
+    for (const k of reactionUserListKeys) {
+      const list = parseUserIdsFromReactionEntry(o[k]);
+      if (list.length > 0) {
+        setUsers(emoji, list);
+        break;
+      }
+    }
+  };
+
+  const summaryRaw = v.reactionSummary ?? v.reaction_summary;
+  if (summaryRaw && typeof summaryRaw === "object" && !Array.isArray(summaryRaw)) {
+    for (const [key, val] of Object.entries(summaryRaw as Record<string, unknown>)) {
+      applySummaryEntry(key, val);
+    }
+  } else if (Array.isArray(summaryRaw)) {
+    for (const item of summaryRaw) {
+      const r = (item ?? {}) as Record<string, unknown>;
+      const em = typeof r.emoji === "string" ? r.emoji : null;
+      if (!em) continue;
+      const cRaw = r.count ?? r.total ?? r.reactionCount;
+      setCount(em, cRaw);
+      for (const k of reactionUserListKeys) {
+        const list = parseUserIdsFromReactionEntry(r[k]);
+        if (list.length > 0) {
+          setUsers(em, list);
+          break;
+        }
+      }
+    }
+  }
+
+  const reactionsField = v.reactions;
+  if (reactionsField && typeof reactionsField === "object" && !Array.isArray(reactionsField)) {
+    for (const [key, val] of Object.entries(reactionsField as Record<string, unknown>)) {
+      applySummaryEntry(key, val);
+    }
+  }
+
+  if (Array.isArray(reactionsField)) {
+    for (const r of reactionsField) {
+      const rr = (r ?? {}) as Record<string, unknown>;
+      const emoji = rr.emoji;
+      const countRaw = rr.count ?? rr.total;
+      if (typeof emoji !== "string") continue;
+      const count =
+        typeof countRaw === "number"
+          ? countRaw
+          : typeof countRaw === "string" && /^\d+$/.test(countRaw)
+            ? Number(countRaw)
+            : 1;
+      reactionMap[emoji] = count;
+      for (const k of reactionUserListKeys) {
+        const users = parseUserIdsFromReactionEntry(rr[k]);
+        if (users.length > 0) {
+          setUsers(emoji, users);
+          break;
+        }
+      }
+    }
+  }
+
+  return { reactionMap, reactionUsers };
+};
+
+/**
+ * Maps WebSocket / REST reaction payloads to message fields.
+ * When `reactionSummary`, `reaction_summary`, or `reactions` is present, counts are **authoritative** (replace, not merge incrementally).
+ */
+export function pickMessageReactionPatch(
+  v: Record<string, unknown>
+): Partial<
+  Pick<ChatMessage, "reactions" | "reactionUsers" | "myReaction" | "reactionSummary">
+> {
+  const patch: Partial<
+    Pick<ChatMessage, "reactions" | "reactionUsers" | "myReaction" | "reactionSummary">
+  > = {};
+  const hasSummaryKey = "reactionSummary" in v || "reaction_summary" in v;
+  const reactionsVal = v.reactions;
+  const hasReactionsObject =
+    reactionsVal != null && typeof reactionsVal === "object" && !Array.isArray(reactionsVal);
+  const hasReactionsArray = Array.isArray(reactionsVal);
+
+  if (hasSummaryKey || hasReactionsObject || hasReactionsArray) {
+    const { reactionMap, reactionUsers } = parseMessageReactionsFromDto(v);
+    const summaryCopy = { ...reactionMap };
+    patch.reactionSummary = summaryCopy;
+    patch.reactions = Object.keys(reactionMap).length > 0 ? { ...reactionMap } : undefined;
+    patch.reactionUsers = Object.keys(reactionUsers).length > 0 ? reactionUsers : undefined;
+
+    const summaryEmpty =
+      Object.keys(summaryCopy).length === 0 ||
+      Object.values(summaryCopy).every((n) => typeof n === "number" && n <= 0);
+    if (
+      summaryEmpty &&
+      !("myReaction" in v) &&
+      !("my_reaction" in v) &&
+      !("selfReaction" in v)
+    ) {
+      patch.myReaction = undefined;
+    }
+  }
+
+  if ("myReaction" in v || "my_reaction" in v || "selfReaction" in v) {
+    const mrRaw = v.myReaction ?? v.my_reaction ?? v.selfReaction;
+    if (mrRaw === null) patch.myReaction = undefined;
+    else if (typeof mrRaw === "string") patch.myReaction = mrRaw.trim() || undefined;
+  }
+  return patch;
+}
+
 const mapMessage = (value: unknown): ChatMessage => {
   const v = (value ?? {}) as Record<string, unknown>;
   const senderName =
@@ -409,45 +583,25 @@ const mapMessage = (value: unknown): ChatMessage => {
     if (mediaUrl) return "file";
     return undefined;
   })();
-  const reactionList = Array.isArray(v.reactions) ? v.reactions : [];
-  const reactionMap: Record<string, number> = {};
-  const reactionUsers: Record<string, string[]> = {};
-  for (const r of reactionList) {
-    const rr = (r ?? {}) as Record<string, unknown>;
-    const emoji = rr.emoji;
-    const countRaw = rr.count ?? rr.total;
-    if (typeof emoji !== "string") continue;
-    const count =
-      typeof countRaw === "number"
-        ? countRaw
-        : typeof countRaw === "string" && /^\d+$/.test(countRaw)
-          ? Number(countRaw)
-          : 1;
-    reactionMap[emoji] = count;
-    const usersRaw =
-      rr.userIds ??
-      rr.user_ids ??
-      rr.users ??
-      rr.reactors ??
-      rr.reactedBy ??
-      rr.reacted_by;
-    if (Array.isArray(usersRaw)) {
-      const users = usersRaw
-        .map((u) => {
-          if (typeof u === "string" || typeof u === "number") return String(u);
-          if (!u || typeof u !== "object") return "";
-          const vv = u as Record<string, unknown>;
-          const id = vv.id ?? vv.userId ?? vv.user_id ?? vv.username ?? vv.userName;
-          return id != null ? String(id) : "";
-        })
-        .filter((v): v is string => v.trim().length > 0);
-      if (users.length > 0) reactionUsers[emoji] = Array.from(new Set(users));
-    }
-  }
+  const { reactionMap, reactionUsers } = parseMessageReactionsFromDto(v);
   const myReactionRaw = v.myReaction ?? v.my_reaction ?? v.selfReaction;
   const myReaction =
     typeof myReactionRaw === "string" && myReactionRaw.trim().length > 0
       ? myReactionRaw.trim()
+      : undefined;
+
+  const contentSnippetRaw = firstNonEmptyString(
+    v.contentSnippet,
+    v.content_snippet,
+    v.snippet,
+    v.preview,
+    v.textPreview,
+    v.text_preview,
+    v.summary
+  );
+  const contentSnippet =
+    contentSnippetRaw && contentSnippetRaw.trim().length > 0
+      ? contentSnippetRaw.trim()
       : undefined;
 
   if (isChatDebug()) {
@@ -480,7 +634,21 @@ const mapMessage = (value: unknown): ChatMessage => {
     v.parentMessage ??
     v.parent_message ??
     v.parent ??
-    (v.replyTo && typeof v.replyTo === "object" ? v.replyTo : undefined);
+    (v.replyTo && typeof v.replyTo === "object" && !Array.isArray(v.replyTo)
+      ? v.replyTo
+      : undefined) ??
+    (v.inReplyTo && typeof v.inReplyTo === "object" && !Array.isArray(v.inReplyTo)
+      ? v.inReplyTo
+      : undefined) ??
+    (v.in_reply_to && typeof v.in_reply_to === "object" && !Array.isArray(v.in_reply_to)
+      ? v.in_reply_to
+      : undefined) ??
+    (v.quotedMessage && typeof v.quotedMessage === "object" && !Array.isArray(v.quotedMessage)
+      ? v.quotedMessage
+      : undefined) ??
+    (v.quoted_message && typeof v.quoted_message === "object" && !Array.isArray(v.quoted_message)
+      ? v.quoted_message
+      : undefined);
   const parentMessage =
     parentMessageRaw && typeof parentMessageRaw === "object"
       ? (() => {
@@ -493,12 +661,49 @@ const mapMessage = (value: unknown): ChatMessage => {
             p.username,
             p.userName
           );
+          const psnippet = firstNonEmptyString(
+            p.contentSnippet,
+            p.content_snippet,
+            p.snippet,
+            p.preview,
+            p.textPreview,
+            p.text_preview,
+            p.summary
+          );
           const pcontent = firstNonEmptyString(p.content, p.message, p.text);
-          if (pid == null && !psender && !pcontent) return undefined;
+          const pMediaUrlRaw = firstNonEmptyString(
+            p.attachmentUrl,
+            p.attachment_url,
+            p.mediaUrl,
+            p.media_url,
+            p.fileUrl,
+            p.file_url,
+            p.url,
+            p.path,
+            p.filePath,
+            p.location
+          );
+          const pMediaUrl = pMediaUrlRaw ? toAbsoluteBackendUrl(pMediaUrlRaw) : undefined;
+          const pTypeRaw =
+            p.attachmentType ?? p.attachment_type ?? p.mediaType ?? p.media_type ?? p.fileType;
+          const parentMediaType: "image" | "voice" | "file" | undefined = (() => {
+            const raw = String(pTypeRaw ?? "").toLowerCase();
+            if (raw === "voice" || raw === "audio") return "voice";
+            if (raw === "image" || raw === "file") return raw;
+            if (pMediaUrl && /\.(webm|ogg|opus|mp3|wav|m4a)(\?|#|$)/i.test(pMediaUrl)) return "voice";
+            if (pMediaUrl && /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(pMediaUrl))
+              return "image";
+            if (pMediaUrl) return "file";
+            return undefined;
+          })();
+          if (pid == null && !psender && !pcontent && !psnippet && !pMediaUrlRaw) return undefined;
           return {
             id: String(pid ?? crypto.randomUUID()),
             sender: psender ?? undefined,
             content: pcontent ?? undefined,
+            contentSnippet: psnippet ?? undefined,
+            mediaUrl: pMediaUrl,
+            mediaType: parentMediaType,
           };
         })()
       : undefined;
@@ -527,10 +732,41 @@ const mapMessage = (value: unknown): ChatMessage => {
         ? voiceDurationFromServer
         : undefined,
     reactions: Object.keys(reactionMap).length > 0 ? reactionMap : undefined,
+    reactionSummary:
+      "reactionSummary" in v || "reaction_summary" in v ? { ...reactionMap } : undefined,
     reactionUsers: Object.keys(reactionUsers).length > 0 ? reactionUsers : undefined,
     myReaction,
   };
 };
+
+/**
+ * Fills `parentMessage` when the API only sent `parentMessageId` but the parent row exists
+ * in the same message list (typical room history).
+ */
+export function enrichMessagesWithReplyParents(messages: ChatMessage[]): ChatMessage[] {
+  const byId = new Map<string, ChatMessage>();
+  for (const m of messages) {
+    byId.set(String(m.id), m);
+  }
+  return messages.map((m) => {
+    if (m.parentMessage != null) return m;
+    const pid = m.parentMessageId?.trim();
+    if (!pid) return m;
+    const p = byId.get(pid);
+    if (!p) return m;
+    return {
+      ...m,
+      parentMessage: {
+        id: String(p.id),
+        sender: p.sender,
+        content: p.content,
+        contentSnippet: p.contentSnippet,
+        mediaUrl: p.mediaUrl,
+        mediaType: p.mediaType,
+      },
+    };
+  });
+}
 
 export const normalizeMessageBody = (value: unknown): ChatMessage => mapMessage(value);
 
@@ -1142,8 +1378,8 @@ export const chatApi = {
   },
 
   /**
-   * `POST /api/posts/{id}/reactions` — body `{ emoji }`.
-   * Response may include `reactionCount`, `myReaction`, or a nested `post`.
+   * `POST /api/posts/{id}/react` — path `id` (int64 post id); body `{ "emoji": string }`.
+   * Response may include `reactionCount`, `myReaction`, or nested `post` / `data`.
    */
   async reactToPost(
     token: string,
@@ -1151,8 +1387,8 @@ export const chatApi = {
     emoji: string
   ): Promise<{ reactionCount: number; myReaction: string | null }> {
     const response = await backendApi.post(
-      `/api/posts/${encodeURIComponent(postId)}/react`,
-      { emoji },
+      `/api/posts/${encodeURIComponent(String(postId).trim())}/react`,
+      { emoji: emoji.trim() },
       { headers: authHeaders(token) }
     );
     const raw = (response.data ?? {}) as Record<string, unknown>;
@@ -1315,7 +1551,13 @@ export const chatApi = {
     return roomId != null ? String(roomId) : null;
   },
 
-  /** ChatRoomController: `GET /api/rooms/{roomId}/history` */
+  /**
+   * ChatRoomController: `GET /api/rooms/{roomId}/history`
+   * Each element is passed through {@link mapMessage}, which reads nested reply DTOs when present
+   * (`parentMessage`, `parent_message`, `parent`, `replyTo`, `inReplyTo`, `quotedMessage`, …)
+   * plus `parentMessageId` / `parent_message_id`. Nested parent text may be omitted; callers can
+   * use {@link enrichMessagesWithReplyParents} on the returned array.
+   */
   async getRoomHistory(token: string, roomId: string): Promise<ChatMessage[]> {
     const response = await backendApi.get(`/api/rooms/${roomId}/history`, {
       headers: authHeaders(token),
@@ -1487,7 +1729,13 @@ export const chatApi = {
     messageId: string,
     emoji: string
   ): Promise<
-    { reactions?: Record<string, number>; reactionUsers?: Record<string, string[]>; myReaction?: string | null } | null
+    | {
+        reactions?: Record<string, number>;
+        reactionSummary?: Record<string, number>;
+        reactionUsers?: Record<string, string[]>;
+        myReaction?: string | null;
+      }
+    | null
   > {
     const response = await backendApi.post(
       `/api/messages/${messageId}/reactions`,
@@ -1508,13 +1756,18 @@ export const chatApi = {
             : v;
 
     const fromMapped = mapMessage(inner);
+    const hasSummaryOnPayload =
+      "reactionSummary" in inner || "reaction_summary" in inner;
     const hasMappedReactions =
       !!fromMapped.reactions ||
+      !!fromMapped.reactionSummary ||
       !!fromMapped.reactionUsers ||
-      typeof fromMapped.myReaction !== "undefined";
+      typeof fromMapped.myReaction !== "undefined" ||
+      hasSummaryOnPayload;
     if (hasMappedReactions) {
       return {
         reactions: fromMapped.reactions,
+        reactionSummary: fromMapped.reactionSummary,
         reactionUsers: fromMapped.reactionUsers,
         myReaction: fromMapped.myReaction ?? null,
       };
@@ -1562,7 +1815,14 @@ export const chatApi = {
       typeof myReactionRaw === "string" && myReactionRaw.trim().length > 0
         ? myReactionRaw.trim()
         : null;
-    return { reactions, reactionUsers, myReaction };
+    const summaryPatch = pickMessageReactionPatch(inner);
+    return {
+      reactions,
+      reactionUsers,
+      reactionSummary:
+        summaryPatch.reactionSummary ?? (reactions ? { ...reactions } : undefined),
+      myReaction,
+    };
   },
 
   /**

@@ -20,14 +20,8 @@ const WS_URL = `${WS_BASE}/ws-chat`;
 
 type Handlers = {
   onRoomMessage?: (message: ChatMessage) => void;
-  onRoomReactionEvent?: (event: {
-    action?: string;
-    messageId?: string | number;
-    roomId?: string | number;
-    emoji?: string;
-    userId?: string | number;
-    username?: string;
-  }) => void;
+  /** Full STOMP payload — may include `reactionSummary`, `count`, etc. */
+  onRoomReactionEvent?: (event: Record<string, unknown>) => void;
   onTypingUsers?: (usernames: string[]) => void;
 };
 
@@ -108,21 +102,27 @@ export function useChatRoomRealtime(
           try {
             const raw = JSON.parse(frame.body) as unknown;
             if (raw && typeof raw === "object") {
-              const r = raw as Record<string, unknown>;
+              const r0 = raw as Record<string, unknown>;
+              const nested =
+                (r0.payload && typeof r0.payload === "object" && !Array.isArray(r0.payload)
+                  ? (r0.payload as Record<string, unknown>)
+                  : null) ??
+                (r0.body && typeof r0.body === "object" && !Array.isArray(r0.body)
+                  ? (r0.body as Record<string, unknown>)
+                  : null) ??
+                (r0.data && typeof r0.data === "object" && !Array.isArray(r0.data)
+                  ? (r0.data as Record<string, unknown>)
+                  : null);
+              const r = nested ? { ...r0, ...nested } : r0;
               const looksLikeReactionEvent =
-                (typeof r.action === "string" || typeof r.emoji === "string") &&
-                (typeof r.messageId !== "undefined" || typeof r.message_id !== "undefined");
+                (typeof r.messageId !== "undefined" || typeof r.message_id !== "undefined") &&
+                (typeof r.action === "string" ||
+                  typeof r.emoji === "string" ||
+                  "reactionSummary" in r ||
+                  "reaction_summary" in r ||
+                  (r.reactions != null && typeof r.reactions === "object"));
               if (looksLikeReactionEvent) {
-                handlersRef.current.onRoomReactionEvent?.({
-                  action: typeof r.action === "string" ? r.action : undefined,
-                  messageId: (r.messageId ?? r.message_id) as string | number | undefined,
-                  roomId: (r.roomId ?? r.room_id) as string | number | undefined,
-                  emoji: typeof r.emoji === "string" ? r.emoji : undefined,
-                  userId: (r.userId ?? r.user_id) as string | number | undefined,
-                  username:
-                    (typeof r.username === "string" && r.username) ||
-                    (typeof r.sender === "string" ? r.sender : undefined),
-                });
+                handlersRef.current.onRoomReactionEvent?.(r);
                 return;
               }
             }

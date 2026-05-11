@@ -3,7 +3,14 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
-import { chatApi, deriveUsersFromChats, mergeUserSummaries, parseJwtIdentity } from "../../chat/api";
+import {
+  chatApi,
+  deriveUsersFromChats,
+  enrichMessagesWithReplyParents,
+  mergeUserSummaries,
+  parseJwtIdentity,
+  pickMessageReactionPatch,
+} from "../../chat/api";
 import {
   applyMessagesSeenEvent,
   isMessageFromCurrentUser,
@@ -232,7 +239,7 @@ export default function ChatApp() {
       } catch {
         /* optional: history DTO may already include seen/readAt */
       }
-      setMessages(merged);
+      setMessages(enrichMessagesWithReplyParents(merged));
       setExtraUnreadByRoom((prev) => ({ ...prev, [activeRoomId]: 0 }));
     } catch (err) {
       handleApiError(err, "Failed to load messages.");
@@ -425,20 +432,66 @@ export default function ChatApp() {
   );
 
   const onStompRoomReactionEvent = useCallback(
-    (event: {
-      action?: string;
-      messageId?: string | number;
-      roomId?: string | number;
-      emoji?: string;
-      userId?: string | number;
-      username?: string;
-    }) => {
-      const messageId = event.messageId != null ? String(event.messageId) : "";
-      const emoji = (event.emoji ?? "").trim();
-      if (!messageId || !emoji) return;
+    (event: Record<string, unknown>) => {
+      const messageId =
+        event.messageId != null
+          ? String(event.messageId)
+          : event.message_id != null
+            ? String(event.message_id)
+            : "";
+      if (!messageId) return;
+
+      const replaceFromPayload =
+        event.reactionSummary != null ||
+        event.reaction_summary != null ||
+        (event.reactions != null && typeof event.reactions === "object");
+
+      const patch = pickMessageReactionPatch(event);
+      if (replaceFromPayload || Object.keys(patch).length > 0) {
+        setMessages((prev) =>
+          prev.map((m) => (String(m.id) === messageId ? { ...m, ...patch } : m))
+        );
+        return;
+      }
+
+      const emoji = typeof event.emoji === "string" ? event.emoji.trim() : "";
+      const totalRaw =
+        event.count ??
+        event.updatedCount ??
+        event.totalCount ??
+        event.emojiCount ??
+        event.newCount;
+      const totalForEmoji =
+        typeof totalRaw === "number" && Number.isFinite(totalRaw)
+          ? Math.max(0, Math.floor(totalRaw))
+          : typeof totalRaw === "string" && /^\d+$/.test(String(totalRaw).trim())
+            ? Math.max(0, Number(String(totalRaw).trim()))
+            : null;
+
+      if (emoji && totalForEmoji != null) {
+        const myPatch = pickMessageReactionPatch(event);
+        setMessages((prev) =>
+          prev.map((m) => {
+            if (String(m.id) !== messageId) return m;
+            const nextMap = { ...(m.reactions ?? {}) };
+            if (totalForEmoji <= 0) delete nextMap[emoji];
+            else nextMap[emoji] = totalForEmoji;
+            return {
+              ...m,
+              reactions: Object.keys(nextMap).length > 0 ? nextMap : undefined,
+              reactionSummary: undefined,
+              ...(myPatch.myReaction !== undefined ? { myReaction: myPatch.myReaction } : {}),
+            };
+          })
+        );
+        return;
+      }
+
+      if (!emoji) return;
+
       const action = String(event.action ?? "ADDED").toUpperCase();
       const actorId = event.userId != null ? String(event.userId) : null;
-      const actorUsername = (event.username ?? "").trim().toLowerCase();
+      const actorUsername = (typeof event.username === "string" ? event.username : "").trim().toLowerCase();
       const actorKey = actorId ?? (actorUsername.length > 0 ? actorUsername : null);
       const isMineEvent =
         (actorId != null && currentUserId != null && actorId === String(currentUserId)) ||
@@ -452,8 +505,6 @@ export default function ChatApp() {
           const nextMap = { ...(m.reactions ?? {}) };
           const nextUsers = { ...(m.reactionUsers ?? {}) };
           if (action === "REMOVED" || action === "DELETED" || action === "CANCELLED") {
-            // If this is my own websocket echo and optimistic UI already removed it,
-            // do not decrement again (prevents lingering +1 after toggle-off).
             if (isMineEvent && m.myReaction !== emoji) {
               if (actorKey) {
                 const users = (nextUsers[emoji] ?? []).filter((u) => u !== actorKey);
@@ -463,6 +514,7 @@ export default function ChatApp() {
               return {
                 ...m,
                 reactionUsers: Object.keys(nextUsers).length > 0 ? nextUsers : undefined,
+                reactionSummary: undefined,
                 myReaction: m.myReaction,
               };
             }
@@ -478,12 +530,10 @@ export default function ChatApp() {
               ...m,
               reactions: Object.keys(nextMap).length > 0 ? nextMap : undefined,
               reactionUsers: Object.keys(nextUsers).length > 0 ? nextUsers : undefined,
+              reactionSummary: undefined,
               myReaction: isMineEvent && m.myReaction === emoji ? undefined : m.myReaction,
             };
           }
-          // Default ADDED/UPDATED behavior.
-          // If this is my own websocket echo and optimistic UI already applied this emoji,
-          // do not increment a second time.
           if (isMineEvent && m.myReaction === emoji) {
             if (actorKey) {
               const users = nextUsers[emoji] ?? [];
@@ -492,6 +542,7 @@ export default function ChatApp() {
             return {
               ...m,
               reactionUsers: Object.keys(nextUsers).length > 0 ? nextUsers : undefined,
+              reactionSummary: undefined,
               myReaction: emoji,
             };
           }
@@ -503,6 +554,7 @@ export default function ChatApp() {
             ...m,
             reactions: nextMap,
             reactionUsers: Object.keys(nextUsers).length > 0 ? nextUsers : undefined,
+            reactionSummary: undefined,
             myReaction: isMineEvent ? emoji : m.myReaction,
           };
         })
@@ -867,6 +919,9 @@ export default function ChatApp() {
                     id: String(parentMessage.id),
                     sender: parentMessage.sender,
                     content: parentMessage.content,
+                    contentSnippet: parentMessage.contentSnippet,
+                    mediaUrl: parentMessage.mediaUrl,
+                    mediaType: parentMessage.mediaType,
                   }
                 : undefined,
               createdAt: new Date().toISOString(),
@@ -983,6 +1038,7 @@ export default function ChatApp() {
               let updated:
                 | {
                     reactions?: Record<string, number>;
+                    reactionSummary?: Record<string, number>;
                     reactionUsers?: Record<string, string[]>;
                     myReaction?: string | null;
                   }
@@ -1012,6 +1068,7 @@ export default function ChatApp() {
               if (
                 updated &&
                 (updated.reactions ||
+                  updated.reactionSummary ||
                   updated.reactionUsers ||
                   typeof updated.myReaction !== "undefined")
               ) {
@@ -1024,6 +1081,10 @@ export default function ChatApp() {
                             typeof updated.reactions !== "undefined"
                               ? updated.reactions
                               : m.reactions,
+                          reactionSummary:
+                            typeof updated.reactionSummary !== "undefined"
+                              ? updated.reactionSummary
+                              : m.reactionSummary,
                           reactionUsers:
                             typeof updated.reactionUsers !== "undefined"
                               ? updated.reactionUsers

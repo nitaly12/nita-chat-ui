@@ -10,6 +10,7 @@ import {
   resolveChatName,
   resolveOtherOnline,
 } from "../../chat/chatPeerProfile";
+import { getReplyTargetPreviewText } from "../../chat/replyPreview";
 import type { Chat, ChatMessage, UserSummary } from "../../chat/types";
 import { useVoiceRecorder } from "../../hooks/useVoiceRecorder";
 import MessageBubble from "./MessageBubble";
@@ -193,7 +194,19 @@ export default function ChatWindow({
                 aria-label="Back to chats"
                 className="-ml-2 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 md:hidden"
               >
-                <span aria-hidden className="text-xl leading-none">←</span>
+                <span aria-hidden className="inline-flex text-slate-600 dark:text-slate-300">
+                  <svg
+                    className="h-6 w-6"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M15 18l-6-6 6-6" />
+                  </svg>
+                </span>
               </button>
             ) : null}
             <div className="relative shrink-0">
@@ -613,7 +626,7 @@ export default function ChatWindow({
                           Replying to {replyingTo.sender || "Message"}
                         </p>
                         <p className="truncate text-slate-600">
-                          {(replyingTo.content || "").trim() || "Attachment"}
+                          {getReplyTargetPreviewText(replyingTo)}
                         </p>
                       </div>
                       <button

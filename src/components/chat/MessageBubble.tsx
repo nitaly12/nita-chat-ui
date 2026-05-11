@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { CHAT_BACKEND_ORIGIN } from "../../chat/api";
 import { isChatDebug } from "../../chat/chatDebug";
+import { getReplyTargetPreviewText } from "../../chat/replyPreview";
+import { messageElementDomId, scrollToMessage } from "../../chat/scrollToMessage";
 import type { ChatMessage } from "../../chat/types";
 import VoiceMessagePlayer from "./VoiceMessagePlayer";
 
@@ -32,6 +34,15 @@ const formatShortTime = (iso: string): string =>
   new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
 const QUICK_REACTIONS = ["👍", "❤️", "😆", "😮", "😢", "😡"] as const;
+
+/** Prefer server `reactionSummary` when present; only show emojis with count > 0. */
+function reactionDisplayEntries(message: ChatMessage): Array<[string, number]> {
+  const base =
+    message.reactionSummary !== undefined ? message.reactionSummary : (message.reactions ?? {});
+  return (Object.entries(base) as Array<[string, number]>).filter(
+    ([, count]) => typeof count === "number" && count > 0
+  );
+}
 
 /** Hide voice metadata JSON if the server still stores it in `content`. */
 function isVoiceJsonContent(text: string): boolean {
@@ -197,25 +208,8 @@ export default function MessageBubble({
         urlLooksLikeAudio ||
         (message.mediaType === "file" && looksLikeAudioFile))
   );
-  const renderReplyHeader = () => {
-    if (!message.parentMessage) return null;
-    const quotedSender = message.parentMessage.sender?.trim() || "Reply";
-    const quotedContent = message.parentMessage.content?.trim() || "Attachment";
-    return (
-      <div
-        className={`mb-1 rounded border-l-2 border-white/50 bg-white/10 p-2 ${
-          isMine ? "text-white/95" : "text-slate-700 ring-1 ring-slate-200/70"
-        }`}
-      >
-        <p className={`text-[11px] font-semibold ${isMine ? "text-white" : "text-slate-800"}`}>
-          {quotedSender}
-        </p>
-        <p className={`truncate text-xs ${isMine ? "text-white/90" : "text-slate-600"}`}>
-          {quotedContent}
-        </p>
-      </div>
-    );
-  };
+  /** Reply strip only when the message includes nested `parentMessage` (not `parentMessageId` alone). */
+  const parentQuote = message.parentMessage;
 
   const receiptPhase = getReceiptPhase(message, isMine, currentUserId, currentUsername);
   const pendingStatusLabel =
@@ -233,7 +227,11 @@ export default function MessageBubble({
       : null;
 
   return (
-    <div className={`group relative mb-6 flex w-full ${isMine ? "justify-end" : "justify-start"}`}>
+    <div
+      id={messageElementDomId(message.id)}
+      data-msg-id={message.id}
+      className={`group relative mb-6 flex w-full scroll-mt-4 ${isMine ? "justify-end" : "justify-start"}`}
+    >
       {confirmDeleteOpen ? (
         <div
           className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-[1px]"
@@ -360,7 +358,28 @@ export default function MessageBubble({
           }`}
         >
             <>
-              {message.parentMessage ? renderReplyHeader() : null}
+              {parentQuote ? (
+                <button
+                  type="button"
+                  aria-label="Jump to quoted message"
+                  className={`cursor-pointer mb-1 w-full rounded border-l-2 border-white/50 bg-white/10 p-2 text-left transition-opacity hover:opacity-90 active:opacity-80 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-300/90 ${
+                    isMine ? "text-white/95" : "text-slate-700 ring-1 ring-slate-200/70"
+                  }`}
+                  onClick={() =>
+                    scrollToMessage(
+                      String(parentQuote.id ?? "").trim() ||
+                        String(message.parentMessageId ?? "").trim()
+                    )
+                  }
+                >
+                  <p className={`text-[11px] font-semibold ${isMine ? "text-white" : "text-slate-800"}`}>
+                    {parentQuote.sender?.trim() || "Reply"}
+                  </p>
+                  <p className={`truncate text-xs ${isMine ? "text-white/90" : "text-slate-600"}`}>
+                    {getReplyTargetPreviewText(parentQuote)}
+                  </p>
+                </button>
+              ) : null}
 
               {/* Message Content (never show raw voice JSON — player handles it) */}
               {message.content &&
@@ -449,7 +468,7 @@ export default function MessageBubble({
 
           {/* 3. REACTION BADGES: Floating at the bottom edge */}
           <div className="absolute -bottom-3 left-2 flex flex-wrap gap-1">
-              {(Object.entries(message.reactions ?? {}) as Array<[string, number]>).map(([emoji, count]) => (
+              {reactionDisplayEntries(message).map(([emoji, count]) => (
                 (() => {
                   const currentUserKey = currentUserId != null ? String(currentUserId) : null;
                   const currentUsernameKey = currentUsername?.trim().toLowerCase() ?? "";
@@ -476,25 +495,37 @@ export default function MessageBubble({
                 })()
               ))}
               
-              {/* Quick reaction picker: visible on hover */}
+              {/* Quick reaction picker: white pill (Messenger-style), visible on hover */}
               <div
-                className={`pointer-events-none absolute -top-13 z-10 rounded-full bg-white/95 p-1 shadow-lg ring-1 ring-slate-200 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:opacity-100 dark:bg-slate-800/95 dark:ring-slate-700 ${
+                className={`pointer-events-none absolute -top-[3.25rem] z-10 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:opacity-100 ${
                   isMine ? "right-0" : "left-0"
                 }`}
               >
-                <div className="flex items-center gap-1">
-                  {QUICK_REACTIONS.map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      onClick={() => void onReact(message.id, emoji)}
-                      className="flex h-8 w-8 items-center justify-center rounded-full text-lg transition-transform hover:scale-115"
-                      title={`React ${emoji}`}
-                      aria-label={`React ${emoji}`}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
+                <div
+                  className={`flex items-center gap-0.5 rounded-full border border-slate-200/90 bg-white px-2 py-1.5 shadow-[0_4px_24px_rgba(15,23,42,0.14)] ring-1 ring-black/[0.04] dark:border-slate-600 dark:bg-slate-800 dark:ring-white/10 ${
+                    isMine ? "origin-bottom-right" : "origin-bottom-left"
+                  }`}
+                >
+                  {QUICK_REACTIONS.map((emoji) => {
+                    const mineSticker = message.myReaction === emoji;
+                    return (
+                      <button
+                        key={emoji}
+                        type="button"
+                        onClick={() => void onReact(message.id, emoji)}
+                        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-2xl leading-none transition-transform active:scale-90 ${
+                          mineSticker
+                            ? "border-2 border-blue-500 bg-blue-100 text-slate-900 ring-2 ring-blue-400/35 dark:bg-blue-950/55 dark:text-slate-100 dark:ring-blue-500/30"
+                            : "border-2 border-transparent text-slate-900 hover:bg-slate-100 dark:text-slate-100 dark:hover:bg-slate-700"
+                        }`}
+                        title={mineSticker ? `Your reaction (${emoji})` : `React ${emoji}`}
+                        aria-label={`React ${emoji}`}
+                        aria-pressed={mineSticker}
+                      >
+                        {emoji}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
           </div>

@@ -185,9 +185,22 @@ export default function UserPublicProfilePage() {
       <div className="mx-auto max-w-lg px-4 py-8">
         <Link
           href="/"
-          className="mb-6 inline-flex text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
+          aria-label="Back to messages"
+          className="mb-6 inline-flex items-center gap-2 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400"
         >
-          ← Back to messages
+          <svg
+            className="h-6 w-6 shrink-0"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden
+          >
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+          <span>Back</span>
         </Link>
 
         {loading ? (
