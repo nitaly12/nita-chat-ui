@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
 
 export type TopAlertProps = {
   open: boolean;
@@ -59,7 +60,14 @@ export default function TopAlert({
         <div className="flex items-center gap-3">
           <div className="h-11 w-11 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800">
             {avatarUrl ? (
-              <img src={avatarUrl} alt="" className="h-full w-full object-cover" loading="eager" />
+              <SafeRemoteImage
+                src={avatarUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                variant="avatar"
+                loading="eager"
+                decoding="async"
+              />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-sm font-bold text-slate-700 dark:text-slate-200">
                 {initial}

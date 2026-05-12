@@ -7,6 +7,7 @@ import { avatarTone } from "../../chat/chatPeerProfile";
 import type { Chat, FriendshipSnapshot, IncomingFriendRequest, UserSummary } from "../../chat/types";
 import { useFriendshipUi } from "../../contexts/FriendshipUiContext";
 import FriendButton from "../social/FriendButton";
+import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
 
 type FriendsMainViewProps = {
   token: string;
@@ -158,10 +159,11 @@ export default function FriendsMainView({
                   >
                     <div className="flex items-center gap-3">
                       {req.requesterAvatarUrl ? (
-                        <img
+                        <SafeRemoteImage
                           src={req.requesterAvatarUrl}
                           alt=""
                           className="h-12 w-12 shrink-0 rounded-full object-cover ring-1 ring-slate-200/80 dark:ring-slate-600"
+                          variant="avatar"
                           loading="lazy"
                           decoding="async"
                         />
@@ -219,10 +221,11 @@ export default function FriendsMainView({
                   ? `/users/${encodeURIComponent(u.username.trim())}`
                   : null;
                 const avatarInner = u.avatarUrl ? (
-                  <img
+                  <SafeRemoteImage
                     src={u.avatarUrl}
                     alt=""
                     className="h-full w-full object-cover"
+                    variant="avatar"
                     loading="lazy"
                     decoding="async"
                   />

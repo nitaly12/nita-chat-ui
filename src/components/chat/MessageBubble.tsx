@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CHAT_BACKEND_ORIGIN } from "../../chat/api";
+import { toPublicBackendUrl } from "../../chat/api";
 import { isChatDebug } from "../../chat/chatDebug";
 import { getReplyTargetPreviewText } from "../../chat/replyPreview";
 import { messageElementDomId, scrollToMessage } from "../../chat/scrollToMessage";
@@ -12,10 +12,7 @@ function toPlayableAudioUrl(raw: string): string {
   const u = raw.trim();
   /** Same-origin object URLs from the recorder / optimistic UI — never prefix the backend. */
   if (u.startsWith("blob:")) return u;
-  if (/^https?:\/\//i.test(u)) return u;
-  if (u.startsWith("//")) return `http:${u}`;
-  if (u.startsWith("/")) return `${CHAT_BACKEND_ORIGIN}${u}`;
-  return `${CHAT_BACKEND_ORIGIN}/${u}`;
+  return toPublicBackendUrl(u) ?? u;
 }
 
 type MessageBubbleProps = {

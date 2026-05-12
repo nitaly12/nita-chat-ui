@@ -7,6 +7,7 @@ import {
   resolveOtherOnline,
 } from "../../chat/chatPeerProfile";
 import type { Chat, UserSummary } from "../../chat/types";
+import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
 
 type ChatSidebarProps = {
   chats: Chat[];
@@ -143,10 +144,11 @@ export default function ChatSidebar({
                     }`}
                   >
                     {avatarUrl ? (
-                      <img
+                      <SafeRemoteImage
                         src={avatarUrl}
                         alt=""
                         className="h-full w-full object-cover"
+                        variant="avatar"
                         loading="eager"
                         decoding="async"
                       />

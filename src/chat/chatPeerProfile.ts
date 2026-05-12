@@ -1,4 +1,4 @@
-import { CHAT_BACKEND_ORIGIN } from "./api";
+import { getImageUrl } from "@/utils/getImageUrl";
 import type { Chat, UserSummary } from "./types";
 
 function norm(s: string | undefined | null): string {
@@ -67,11 +67,7 @@ export function avatarTone(seed: string): string {
 }
 
 export function toAbsoluteAvatarUrl(raw: string): string {
-  const u = raw.trim();
-  if (/^https?:\/\//i.test(u)) return u;
-  if (u.startsWith("//")) return `https:${u}`;
-  if (u.startsWith("/")) return `${CHAT_BACKEND_ORIGIN}${u}`;
-  return `${CHAT_BACKEND_ORIGIN}/${u}`;
+  return getImageUrl(raw) ?? "";
 }
 
 /** Room image for groups; for DMs: member DTO then `GET /api/users` row. */

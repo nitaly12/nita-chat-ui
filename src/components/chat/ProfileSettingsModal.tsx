@@ -10,6 +10,7 @@ import {
 import { useProfileCoverDraft } from "@/components/profile/useProfileCoverDraft";
 import { validateImageFile } from "@/components/profile/validateProfileImage";
 import { WatercolorBackdrop } from "@/components/profile/WatercolorBackdrop";
+import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
 import type { MyUserProfile } from "@/chat/types";
 
 export type ProfileSettingsModalProps = {
@@ -361,10 +362,11 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
                 }
               >
                 <div className="relative flex h-[7.25rem] w-[7.25rem] items-center justify-center overflow-hidden rounded-full border-4 border-white bg-slate-100 shadow-lg ring-2 ring-slate-200 dark:border-slate-800 dark:bg-slate-800 dark:ring-slate-600 sm:h-[7.75rem] sm:w-[7.75rem]">
-                  <img
+                  <SafeRemoteImage
                     src={avatarUrl}
                     alt=""
                     className="h-full w-full object-cover"
+                    variant="avatar"
                     loading="eager"
                     decoding="async"
                   />
@@ -496,10 +498,11 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
                           })
                         }
                       >
-                        <img
+                        <SafeRemoteImage
                           src={coverPreviewVisible}
                           alt=""
                           className="h-full w-full object-cover"
+                          variant="cover"
                           loading="lazy"
                         />
                       </button>
@@ -731,9 +734,10 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
           >
             ×
           </button>
-          <img
+          <SafeRemoteImage
             src={imageLightbox.src}
             alt=""
+            variant={imageLightbox.variant === "avatar" ? "avatar" : "cover"}
             className={`max-h-[min(92vh,100%)] max-w-full shadow-2xl ${
               imageLightbox.variant === "avatar"
                 ? "max-h-[min(70vh,560px)] max-w-[min(70vh,560px)] object-cover"

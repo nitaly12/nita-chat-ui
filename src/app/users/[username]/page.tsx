@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { chatApi, parseJwtIdentity, readAxiosErrorMessage } from "@/chat/api";
 import { avatarTone, toAbsoluteAvatarUrl } from "@/chat/chatPeerProfile";
 import CommentSection from "@/components/profile/CommentSection";
+import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
 import FriendButton from "@/components/social/FriendButton";
 import type { Chat, MyUserProfile, PostComment, UserPost, UserSummary } from "@/chat/types";
 
@@ -329,10 +330,11 @@ export default function UserPublicProfilePage() {
                       }}
                     >
                       {avatarUrl ? (
-                        <img
-                          src={avatarUrl}
+                        <SafeRemoteImage
+                          src={user.avatarUrl}
                           alt=""
                           className="h-full w-full object-cover"
+                          variant="avatar"
                           loading="eager"
                           decoding="async"
                         />
@@ -473,10 +475,11 @@ export default function UserPublicProfilePage() {
                               }`}
                             >
                               {avatarUrl ? (
-                                <img
-                                  src={avatarUrl}
+                                <SafeRemoteImage
+                                  src={user.avatarUrl}
                                   alt=""
                                   className="h-full w-full object-cover"
+                                  variant="avatar"
                                   loading="lazy"
                                   decoding="async"
                                 />
@@ -498,10 +501,11 @@ export default function UserPublicProfilePage() {
                             </p>
                           ) : null}
                           {post.mediaUrl ? (
-                            <img
+                            <SafeRemoteImage
                               src={post.mediaUrl}
                               alt=""
                               className="mt-3 w-full rounded-xl object-cover max-h-80"
+                              variant="cover"
                               loading="lazy"
                               decoding="async"
                             />

@@ -8,6 +8,7 @@ import CreatePostCard from "./CreatePostCard";
 import PostInteractionBar from "./PostInteractionBar";
 import CommentSection from "./CommentSection";
 import { PostContentWithHashtags } from "./postContentRich";
+import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
 
 export type MyProfileFeedProps = {
   token: string;
@@ -342,10 +343,11 @@ export default function MyProfileFeed({
                         aria-label={`Open ${post.ownerName || viewerLabel} profile`}
                       >
                         {post.ownerAvatarUrl ? (
-                          <img
+                          <SafeRemoteImage
                             src={post.ownerAvatarUrl}
                             alt=""
                             className="h-full w-full object-cover"
+                            variant="avatar"
                             loading="lazy"
                             decoding="async"
                           />
@@ -358,10 +360,11 @@ export default function MyProfileFeed({
                     ) : (
                       <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100 dark:border-slate-600 dark:bg-slate-800">
                         {post.ownerAvatarUrl ? (
-                          <img
+                          <SafeRemoteImage
                             src={post.ownerAvatarUrl}
                             alt=""
                             className="h-full w-full object-cover"
+                            variant="avatar"
                             loading="lazy"
                             decoding="async"
                           />
@@ -491,10 +494,11 @@ export default function MyProfileFeed({
                         ) : null}
                       </div>
                       {post.mediaUrl ? (
-                        <img
+                        <SafeRemoteImage
                           src={post.mediaUrl}
                           alt=""
                           className="max-h-[min(70vh,56rem)] w-full object-cover"
+                          variant="cover"
                           loading="lazy"
                           decoding="async"
                         />

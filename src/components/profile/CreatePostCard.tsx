@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { chatApi, readAxiosErrorMessage } from "@/chat/api";
+import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
 
 export type CreatePostCardProps = {
   token: string;
@@ -99,10 +100,11 @@ export default function CreatePostCard({
         <div className="flex gap-3">
           <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100 dark:border-slate-600 dark:bg-slate-800">
             {composerAvatarUrl ? (
-              <img
+              <SafeRemoteImage
                 src={composerAvatarUrl}
                 alt=""
                 className="h-full w-full object-cover"
+                variant="avatar"
                 loading="lazy"
                 decoding="async"
               />

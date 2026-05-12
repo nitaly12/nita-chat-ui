@@ -30,6 +30,7 @@ import ProfileSettingsModal from "./ProfileSettingsModal";
 import { useChatRoomRealtime } from "./useChatRoomRealtime";
 import { useChatSeenReceipt } from "./useChatSeenReceipt";
 import ChatSkeleton from "../skeleton/ChatSkeleton";
+import { SafeRemoteImage } from "../ui/SafeRemoteImage";
 import { FriendshipUiProvider } from "../../contexts/FriendshipUiContext";
 
 function dedupeMessagesKeepFirst(items: ChatMessage[]): ChatMessage[] {
@@ -850,9 +851,9 @@ export default function ChatApp() {
               CHAT_DEBUG — see DevTools console + voice bubble panels
             </div>
           ) : null}
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
             <nav
-              className="order-1 flex shrink-0 items-center gap-0.5 rounded-2xl border border-[#d7e2d9] bg-[#f7f4ec] p-1 dark:border-slate-600 dark:bg-slate-800/80"
+              className="order-1 flex min-w-0 max-w-full flex-1 items-center gap-0.5 overflow-x-auto rounded-2xl border border-[#d7e2d9] bg-[#f7f4ec] p-1 dark:border-slate-600 dark:bg-slate-800/80 sm:flex-none"
               aria-label="Main views"
             >
               <button
@@ -861,7 +862,7 @@ export default function ChatApp() {
                   setMainPane("feed");
                   setActiveRoomId("");
                 }}
-                className={`rounded-xl px-3 py-1.5 text-xs font-semibold sm:text-sm ${
+                className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-1.5 text-xs font-semibold sm:text-sm ${
                   mainPane === "feed"
                     ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
                     : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
@@ -875,7 +876,7 @@ export default function ChatApp() {
                   setMainPane("friends");
                   setActiveRoomId("");
                 }}
-                className={`rounded-xl px-3 py-1.5 text-xs font-semibold sm:text-sm ${
+                className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-1.5 text-xs font-semibold sm:text-sm ${
                   mainPane === "friends"
                     ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
                     : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
@@ -886,7 +887,7 @@ export default function ChatApp() {
               <button
                 type="button"
                 onClick={() => setMainPane("chat")}
-                className={`rounded-xl px-3 py-1.5 text-xs font-semibold sm:text-sm ${
+                className={`shrink-0 whitespace-nowrap rounded-xl px-3 py-1.5 text-xs font-semibold sm:text-sm ${
                   mainPane === "chat"
                     ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
                     : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
@@ -907,7 +908,7 @@ export default function ChatApp() {
               />
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             <Link
               href="/me/posts"
               className="inline-flex shrink-0 rounded-xl border border-[#d7e2d9] bg-[#f7f4ec] px-2.5 py-2 text-xs font-medium text-slate-700 hover:bg-[#efeadf] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 sm:px-3"
@@ -931,15 +932,16 @@ export default function ChatApp() {
             </button> */}
             <button
               type="button"
-              className="ml-1 flex max-w-[220px] items-center gap-2 rounded-xl border border-[#d7e2d9] bg-[#f7f4ec] px-2 py-1.5 text-left text-sm font-medium text-slate-700 hover:bg-[#efeadf] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              className="ml-1 flex max-w-[130px] items-center gap-2 rounded-xl border border-[#d7e2d9] bg-[#f7f4ec] px-2 py-1.5 text-left text-sm font-medium text-slate-700 hover:bg-[#efeadf] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 sm:max-w-[220px]"
               title="Profile and settings"
               onClick={() => setShowProfileSettings(true)}
             >
               {profileAvatarUrl ? (
-                <img
+                <SafeRemoteImage
                   src={profileAvatarUrl}
                   alt=""
                   className="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-slate-200 dark:ring-slate-600"
+                  variant="avatar"
                   loading="eager"
                   decoding="async"
                 />
@@ -948,7 +950,7 @@ export default function ChatApp() {
                   {(profileDisplayName ?? currentUsername ?? "?").slice(0, 1).toUpperCase()}
                 </span>
               )}
-              <span className="min-w-0 truncate">{profileDisplayName ?? currentUsername ?? "User"}</span>
+              <span className="min-w-0 truncate max-[420px]:hidden">{profileDisplayName ?? currentUsername ?? "User"}</span>
               <span className="shrink-0 text-slate-400" aria-hidden>
                 ▾
               </span>

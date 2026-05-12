@@ -14,6 +14,7 @@ import { getReplyTargetPreviewText } from "../../chat/replyPreview";
 import type { Chat, ChatMessage, UserSummary } from "../../chat/types";
 import { useVoiceRecorder } from "../../hooks/useVoiceRecorder";
 import MessageBubble from "./MessageBubble";
+import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
 
 type ChatWindowProps = {
   activeChat: Chat | null;
@@ -221,10 +222,11 @@ export default function ChatWindow({
                 }`}
               >
                 {headerAvatarUrl ? (
-                  <img
+                  <SafeRemoteImage
                     src={headerAvatarUrl}
                     alt=""
                     className="h-full w-full object-cover"
+                    variant="avatar"
                     loading="eager"
                     decoding="async"
                   />

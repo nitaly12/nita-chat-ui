@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { chatApi, readAxiosErrorMessage } from "@/chat/api";
-import { toAbsoluteAvatarUrl } from "@/chat/chatPeerProfile";
+import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
 import type { PostComment } from "@/chat/types";
 
 export type CommentSectionProps = {
@@ -20,12 +20,6 @@ export type CommentSectionProps = {
   currentUserAvatarUrl?: string | null;
   className?: string;
 };
-
-function resolveAvatarSrc(url: string | null | undefined): string | undefined {
-  const u = url?.trim();
-  if (!u) return undefined;
-  return toAbsoluteAvatarUrl(u);
-}
 
 function formatTime(iso?: string): string {
   if (!iso?.trim()) return "";
@@ -313,18 +307,18 @@ export default function CommentSection({
           <p className="text-center text-sm opacity-70">No comments yet.</p>
         ) : (
           topLevelComments.map((c) => {
-            const src = resolveAvatarSrc(c.avatarUrl);
             const initial = (c.displayName || "?").slice(0, 1).toUpperCase();
             const replies = repliesByParent[c.id] ?? [];
             return (
               <div key={c.id}>
                 <div className="flex gap-3">
                   <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full border border-[color-mix(in_srgb,var(--text-main)_12%,transparent)] bg-[color-mix(in_srgb,var(--text-main)_6%,transparent)] shadow-sm">
-                    {src ? (
-                      <img
-                        src={src}
+                    {c.avatarUrl?.trim() ? (
+                      <SafeRemoteImage
+                        src={c.avatarUrl}
                         alt=""
                         className="h-full w-full object-cover"
+                        variant="avatar"
                         loading="lazy"
                         decoding="async"
                       />
@@ -365,13 +359,19 @@ export default function CommentSection({
                 {replies.length > 0 ? (
                   <div className="ml-[52px] mt-2 space-y-2 border-l border-[color-mix(in_srgb,var(--text-main)_16%,transparent)] pl-3">
                     {replies.map((r) => {
-                      const rSrc = resolveAvatarSrc(r.avatarUrl);
                       const rInitial = (r.displayName || "?").slice(0, 1).toUpperCase();
                       return (
                         <div key={r.id} className="flex gap-2.5 rounded-lg bg-[color-mix(in_srgb,var(--text-main)_4%,transparent)] px-2.5 py-2">
                           <div className="h-7 w-7 shrink-0 overflow-hidden rounded-full border border-[color-mix(in_srgb,var(--text-main)_12%,transparent)]">
-                            {rSrc ? (
-                              <img src={rSrc} alt="" className="h-full w-full object-cover" loading="lazy" decoding="async" />
+                            {r.avatarUrl?.trim() ? (
+                              <SafeRemoteImage
+                                src={r.avatarUrl}
+                                alt=""
+                                className="h-full w-full object-cover"
+                                variant="avatar"
+                                loading="lazy"
+                                decoding="async"
+                              />
                             ) : (
                               <span className="flex h-full w-full items-center justify-center text-[11px] font-semibold opacity-80">
                                 {rInitial}

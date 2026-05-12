@@ -97,15 +97,33 @@ async function getFriendshipRowsCached(token: string): Promise<unknown[]> {
 /** Public origin for `<audio src>` and `fetch` uploads (same as axios `backendApi` baseURL). */
 export const CHAT_BACKEND_ORIGIN = RESOLVED_BACKEND_ORIGIN;
 const BACKEND_ORIGIN = CHAT_BACKEND_ORIGIN;
-const toAbsoluteBackendUrl = (raw: string | undefined): string | undefined => {
-  if (!raw) return undefined;
-  const value = raw.trim();
+
+/**
+ * Resolves stored media/avatar paths for `<img src>`, `<audio src>`, and browser `fetch`.
+ * - Same-origin prod: `CHAT_BACKEND_ORIGIN` is `/backend` (Next rewrites to Spring).
+ * - If the API already returns `/backend/uploads/…`, avoid doubling to `/backend/backend/…`.
+ * - Dev: absolute `http://localhost:8080` + path; strip a leading `/backend` when Spring serves `/uploads` at repo root.
+ */
+export function toPublicBackendUrl(raw: string | undefined | null): string | undefined {
+  if (raw == null) return undefined;
+  const value = String(raw).trim();
   if (!value) return undefined;
+  if (value.startsWith("blob:") || value.startsWith("data:")) return value;
   if (/^https?:\/\//i.test(value)) return value;
-  if (value.startsWith("//")) return `http:${value}`;
-  if (value.startsWith("/")) return `${BACKEND_ORIGIN}${value}`;
-  return `${BACKEND_ORIGIN}/${value}`;
-};
+  if (value.startsWith("//")) return `https:${value}`;
+
+  const origin = BACKEND_ORIGIN.replace(/\/+$/, "");
+  const path = value.startsWith("/") ? value : `/${value}`;
+
+  if (origin === "/backend" && path.startsWith("/backend/")) return path;
+  if (/^https?:\/\//i.test(origin) && path.startsWith("/backend/")) {
+    return `${origin}${path.slice("/backend".length)}`;
+  }
+
+  return `${origin}${path}`;
+}
+
+const toAbsoluteBackendUrl = toPublicBackendUrl;
 
 const decodeJwtPayload = (token: string): Record<string, unknown> | null => {
   try {
