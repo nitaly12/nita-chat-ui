@@ -6,10 +6,35 @@ import { chatApi, readAxiosErrorMessage } from "@/chat/api";
 /** Same set as chat quick reactions — pill picker (Messenger-style). */
 const PICKER_EMOJIS = ["👍", "❤️", "😆", "😮", "😢", "😡"] as const;
 
+const DEFAULT_LIKE_EMOJI = "👍";
+
+/** Emoji shown on the main reaction control: yours first, else top count from `reactionSummary`, else 👍. */
+function likeBarEmoji(
+  myReaction: string | null | undefined,
+  summary: Record<string, number> | null | undefined
+): string {
+  const mine = myReaction?.trim();
+  if (mine) return mine;
+  if (summary && Object.keys(summary).length > 0) {
+    let best = DEFAULT_LIKE_EMOJI;
+    let bestN = -1;
+    for (const [em, n] of Object.entries(summary)) {
+      if (typeof n === "number" && n > bestN) {
+        bestN = n;
+        best = em;
+      }
+    }
+    return best;
+  }
+  return DEFAULT_LIKE_EMOJI;
+}
+
 export type PostInteractionBarProps = {
   token: string;
   postId: string;
   initialReactionCount?: number;
+  /** Per-emoji counts from the post payload (e.g. `{ "❤️": 1 }`). */
+  initialReactionSummary?: Record<string, number> | null;
   initialCommentCount?: number;
   initialMyReaction?: string | null;
   /** Scroll target id for the comment composer/list in the parent card. */
@@ -25,12 +50,18 @@ export default function PostInteractionBar({
   token,
   postId,
   initialReactionCount = 0,
+  initialReactionSummary = null,
   initialCommentCount = 0,
   initialMyReaction = null,
   commentSectionId,
   className = "",
 }: PostInteractionBarProps) {
   const [reactionCount, setReactionCount] = useState(initialReactionCount);
+  const [reactionSummary, setReactionSummary] = useState<Record<string, number> | null>(
+    initialReactionSummary && Object.keys(initialReactionSummary).length > 0
+      ? initialReactionSummary
+      : null
+  );
   const [myReaction, setMyReaction] = useState<string | null>(initialMyReaction ?? null);
   const [commentCount, setCommentCount] = useState(initialCommentCount);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -55,12 +86,23 @@ export default function PostInteractionBar({
   }, [initialReactionCount, postId]);
 
   useEffect(() => {
+    setReactionSummary(
+      initialReactionSummary && Object.keys(initialReactionSummary).length > 0
+        ? initialReactionSummary
+        : null
+    );
+  }, [initialReactionSummary, postId]);
+
+  useEffect(() => {
     setCommentCount(initialCommentCount);
   }, [initialCommentCount, postId]);
 
   useEffect(() => {
     setMyReaction(initialMyReaction ?? null);
   }, [initialMyReaction, postId]);
+
+  const barEmoji = likeBarEmoji(myReaction, reactionSummary);
+  const emojiToToggle = myReaction?.trim() ? myReaction.trim() : DEFAULT_LIKE_EMOJI;
 
   useEffect(() => {
     if (!pickerOpen) return;
@@ -102,23 +144,23 @@ export default function PostInteractionBar({
   };
 
   const btn =
-    "flex flex-1 items-center justify-center gap-2 rounded-xl py-2.5 text-sm font-semibold transition-colors hover:bg-[var(--post-bar-hover)] disabled:opacity-50";
+    "flex flex-1 items-center justify-center gap-1.5 py-2.5 text-sm font-medium transition-colors hover:bg-[var(--post-bar-hover)] disabled:opacity-50";
 
   return (
     <div className={`relative ${className}`}>
       {error ? (
-        <p className="mb-2 text-center text-xs text-red-300 dark:text-red-400">{error}</p>
+        <p className="mb-2 text-center text-xs text-red-600 dark:text-red-400">{error}</p>
       ) : null}
 
       <div
-        className="flex items-center gap-2 border-t border-white/15 pt-1"
+        className="flex items-stretch divide-x divide-slate-200 border-t border-slate-200 pt-0 dark:divide-slate-600 dark:border-slate-600"
         style={{ color: "var(--post-bar-text)" }}
       >
-        <div className="group/preact relative flex flex-1" ref={pickerRef}>
+        <div className="group/preact relative flex min-w-0 flex-1" ref={pickerRef}>
           <button
             type="button"
             disabled={busy !== null}
-            title="Tap for quick 👍 — hold for emoji picker"
+            title={`React (${barEmoji}) — hold for more choices`}
             className={btn}
             onPointerDown={() => {
               if (busy !== null) return;
@@ -140,7 +182,7 @@ export default function PostInteractionBar({
                 setPickerOpen(false);
                 return;
               }
-              void handleEmojiPick("👍");
+              void handleEmojiPick(emojiToToggle);
             }}
             onPointerLeave={() => {
               clearLongPressTimer();
@@ -167,15 +209,12 @@ export default function PostInteractionBar({
               }
             }}
           >
-            <span className="text-lg leading-none" aria-hidden>
-              {myReaction ?? "🙂"}
+            <span className="text-base leading-none" aria-hidden>
+              {barEmoji}
             </span>
-            <span>React</span>
-            {reactionCount > 0 ? (
-              <span className="rounded-full bg-[var(--post-bar-hover)] px-1.5 py-0.5 text-xs font-bold tabular-nums">
-                {reactionCount}
-              </span>
-            ) : null}
+            <span>
+              Like{reactionCount > 0 ? ` (${reactionCount})` : ""}
+            </span>
           </button>
           <div
             className={`absolute bottom-full left-1/2 z-20 mb-1 flex -translate-x-1/2 items-center gap-0.5 rounded-full border border-slate-200/90 bg-white px-2 py-1.5 shadow-[0_4px_24px_rgba(15,23,42,0.14)] ring-1 ring-black/[0.04] transition-opacity duration-150 ${
@@ -210,12 +249,12 @@ export default function PostInteractionBar({
           }}
           className={btn}
         >
-          Comment
-          {commentCount > 0 ? (
-            <span className="rounded-full bg-[var(--post-bar-hover)] px-1.5 py-0.5 text-xs font-bold tabular-nums">
-              {commentCount}
-            </span>
-          ) : null}
+          <span className="text-base leading-none opacity-90" aria-hidden>
+            💬
+          </span>
+          <span>
+            Comment{commentCount > 0 ? ` (${commentCount})` : ""}
+          </span>
         </button>
 
         <button
@@ -227,7 +266,10 @@ export default function PostInteractionBar({
           }}
           className={btn}
         >
-          Share
+          <span className="text-base leading-none opacity-90" aria-hidden>
+            ↗
+          </span>
+          <span>Share</span>
         </button>
       </div>
 

@@ -107,6 +107,8 @@ export type UserPost = {
   createdAt?: string;
   mediaUrl?: string;
   reactionCount?: number;
+  /** Per-emoji counts from the API (e.g. `{ "❤️": 1 }`). */
+  reactionSummary?: Record<string, number>;
   commentCount?: number;
   /** Current user’s reaction emoji, if any */
   myReaction?: string | null;
@@ -114,15 +116,31 @@ export type UserPost = {
   comments?: PostComment[];
 };
 
+/** UI state for friend / follow-request flows (`FriendButton`). */
+export type FriendshipUiStatus = null | "PENDING" | "RECEIVED" | "ACCEPTED";
+
+export type FriendshipSnapshot = {
+  status: FriendshipUiStatus;
+  /** Friend-request row id when status is PENDING or RECEIVED. */
+  requestId?: string;
+};
+
+export type IncomingFriendRequest = {
+  id: string;
+  requesterId: string;
+  requesterUsername: string;
+  requesterDisplayName?: string | null;
+  requesterAvatarUrl?: string | null;
+  createdAt?: string;
+};
+
 export type UserSummary = {
   id: string;
   username: string;
-  /** From `GET /api/users` when the API sends it. */
   displayName?: string | null;
   avatarUrl?: string | null;
   online?: boolean;
   bio?: string | null;
-  /** ISO last seen when the API sends it (e.g. `last_seen_at`). */
   lastSeenAt?: string | null;
 };
 
@@ -132,5 +150,7 @@ export type MyUserProfile = {
   username: string | null;
   displayName: string | null;
   avatarUrl: string | null;
+  coverPhotoUrl: string | null;
+  bio: string | null;
   theme: "light" | "dark";
 };

@@ -5,24 +5,34 @@ import { chatApi, readAxiosErrorMessage } from "@/chat/api";
 
 export type CreatePostCardProps = {
   token: string;
-  /** Called after a successful `POST /api/posts` so the parent can refetch the feed. */
   onPosted?: () => void;
   className?: string;
+  composerAvatarUrl?: string | null;
+  composerName?: string | null;
 };
 
 /**
- * Social-style composer: expanding textarea, optional image preview (ringed like profile avatar),
- * and Post → `POST /api/posts` via shared API client (axios).
+ * Mockup-style composer: white card, avatar + beige “Create Post” field, expands for text and actions.
  */
-export default function CreatePostCard({ token, onPosted, className = "" }: CreatePostCardProps) {
+export default function CreatePostCard({
+  token,
+  onPosted,
+  className = "",
+  composerAvatarUrl,
+  composerName,
+}: CreatePostCardProps) {
   const id = useId();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [focused, setFocused] = useState(false);
   const [content, setContent] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const initial =
+    (composerName ?? "").trim().slice(0, 1).toUpperCase() ||
+    (composerAvatarUrl ? "" : "?");
 
   useEffect(() => {
     if (!imageFile) {
@@ -43,7 +53,7 @@ export default function CreatePostCard({ token, onPosted, className = "" }: Crea
   const resetForm = useCallback(() => {
     setContent("");
     clearImage();
-    setExpanded(false);
+    setFocused(false);
     setError(null);
   }, [clearImage]);
 
@@ -73,115 +83,128 @@ export default function CreatePostCard({ token, onPosted, className = "" }: Crea
     }
   };
 
+  const expanded = focused || content.trim().length > 0 || Boolean(imageFile);
+
   return (
     <div
-      className={`overflow-hidden rounded-3xl border border-[var(--feed-border)] bg-[var(--feed-surface)] shadow-sm ${className}`}
+      className={`overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-sm dark:border-slate-600 dark:bg-slate-900 ${className}`}
     >
       {error ? (
-        <div className="border-b border-[var(--feed-border)] bg-red-50 px-4 py-3 text-sm text-red-800 dark:bg-red-950/40 dark:text-red-200">
+        <div className="border-b border-slate-100 bg-red-50 px-4 py-2.5 text-sm text-red-800 dark:border-slate-700 dark:bg-red-950/40 dark:text-red-200">
           {error}
         </div>
       ) : null}
 
-      <div className="border-b border-[var(--feed-border)] bg-gradient-to-b from-[color-mix(in_srgb,var(--feed-muted)_80%,transparent)] to-[var(--feed-surface)] px-5 py-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-[var(--foreground)]">Create post</p>
-            <p className="mt-0.5 text-xs text-[var(--feed-placeholder)]">Share an update with your network.</p>
+      <div className="p-4">
+        <div className="flex gap-3">
+          <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-slate-100 dark:border-slate-600 dark:bg-slate-800">
+            {composerAvatarUrl ? (
+              <img
+                src={composerAvatarUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                loading="lazy"
+                decoding="async"
+              />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center text-sm font-semibold text-slate-600 dark:text-slate-300">
+                {initial}
+              </span>
+            )}
           </div>
-          <span className="rounded-full border border-[var(--feed-border)] bg-[var(--feed-surface)] px-2.5 py-1 text-[11px] font-semibold text-[var(--feed-placeholder)]">
-            {busy ? "Working…" : "Draft"}
-          </span>
-        </div>
-      </div>
-
-      <div className="px-5 pb-5 pt-4">
-          <label htmlFor={`${id}-content`} className="sr-only">
-            Post content
-          </label>
-          <textarea
-            id={`${id}-content`}
-            rows={expanded ? 4 : 2}
-            placeholder="What’s on your mind?"
-            value={content}
-            disabled={busy}
-            onChange={(e) => setContent(e.target.value)}
-            onFocus={() => setExpanded(true)}
-          className="w-full resize-y rounded-2xl border border-[var(--feed-border)] bg-[var(--feed-muted)] px-4 py-3.5 text-[15px] leading-relaxed text-[var(--foreground)] shadow-inner outline-none transition-[min-height,border-color] placeholder:text-[var(--feed-placeholder)] focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 dark:focus:border-blue-400 dark:focus:ring-blue-400/25"
-          style={{ minHeight: expanded ? 112 : 56 }}
-          />
-
-      {previewUrl ? (
-        <div className="mt-4 overflow-hidden rounded-2xl border border-[var(--feed-border)] bg-[var(--feed-surface)]">
-          <div className="relative">
-            <img
-              src={previewUrl}
-              alt=""
-              className="max-h-[320px] w-full object-cover"
-              loading="eager"
-              decoding="async"
-            />
-            <button
-              type="button"
-              disabled={busy}
-              onClick={clearImage}
-              className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-base font-semibold text-white shadow-md hover:bg-black/70 disabled:opacity-50"
-              aria-label="Remove image"
-              title="Remove"
-            >
-              ×
-            </button>
-          </div>
-          <div className="flex items-center justify-between gap-3 px-4 py-3">
-            <p className="min-w-0 truncate text-sm font-medium text-[var(--foreground)]">Image attached</p>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={clearImage}
-              className="rounded-lg border border-[var(--feed-border)] bg-[var(--feed-muted)] px-3 py-1.5 text-xs font-semibold text-[var(--foreground)] hover:bg-[var(--feed-surface)] disabled:opacity-50"
-            >
-              Remove
-            </button>
+          <div className="min-w-0 flex-1">
+            <label htmlFor={`${id}-content`} className="sr-only">
+              Create post
+            </label>
+            {!expanded ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setFocused(true)}
+                className="w-full rounded-xl border border-transparent bg-[#f4f1eb] px-4 py-2.5 text-left text-sm text-slate-500 transition hover:bg-[#ede9e1] dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700/80"
+              >
+                Create Post
+              </button>
+            ) : (
+              <textarea
+                id={`${id}-content`}
+                rows={expanded ? 4 : 2}
+                placeholder="Create Post"
+                value={content}
+                disabled={busy}
+                onChange={(e) => setContent(e.target.value)}
+                onFocus={() => setFocused(true)}
+                onBlur={() => {
+                  if (!content.trim() && !imageFile) setFocused(false);
+                }}
+                className="w-full resize-y rounded-xl border border-transparent bg-[#f4f1eb] px-4 py-3 text-[15px] leading-relaxed text-slate-900 shadow-inner outline-none transition placeholder:text-slate-400 focus:border-slate-200 focus:bg-white focus:ring-1 focus:ring-slate-200 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-slate-600 dark:focus:bg-slate-900 dark:focus:ring-slate-600"
+                style={{ minHeight: 88 }}
+              />
+            )}
           </div>
         </div>
-      ) : null}
 
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-[var(--feed-border)] pt-4">
-        <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-[var(--feed-border)] bg-[var(--feed-muted)] px-4 py-2.5 text-sm font-semibold text-[var(--foreground)] hover:bg-[var(--feed-surface)] disabled:opacity-50">
-          <span aria-hidden>🖼</span>
-          Add image
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            className="sr-only"
-            disabled={busy}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              setImageFile(f ?? null);
-              e.target.value = "";
-            }}
-          />
-        </label>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={resetForm}
-            className="rounded-xl border border-[var(--feed-border)] bg-[var(--feed-surface)] px-4 py-2.5 text-sm font-semibold text-[var(--foreground)] hover:bg-[var(--feed-muted)] disabled:opacity-50"
-          >
-            Clear
-          </button>
-          <button
-            type="button"
-            disabled={busy || (!content.trim() && !imageFile)}
-            onClick={() => void handlePost()}
-            className="rounded-xl bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:bg-blue-300 dark:disabled:bg-slate-600"
-          >
-            {busy ? "Posting…" : "Post"}
-          </button>
-        </div>
-      </div>
+        {previewUrl ? (
+          <div className="mt-3 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-600">
+            <div className="relative">
+              <img
+                src={previewUrl}
+                alt=""
+                className="max-h-64 w-full object-cover"
+                loading="eager"
+                decoding="async"
+              />
+              <button
+                type="button"
+                disabled={busy}
+                onClick={clearImage}
+                className="absolute right-2 top-2 inline-flex h-8 w-8 items-center justify-center rounded-full bg-black/55 text-sm font-semibold text-white hover:bg-black/70 disabled:opacity-50"
+                aria-label="Remove image"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {expanded ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3 dark:border-slate-700">
+            <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 dark:text-slate-400 dark:hover:bg-slate-800">
+              <span aria-hidden>🖼</span>
+              Add image
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                disabled={busy}
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  setImageFile(f ?? null);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={resetForm}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                disabled={busy || (!content.trim() && !imageFile)}
+                onClick={() => void handlePost()}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:bg-blue-300 dark:disabled:bg-slate-600"
+              >
+                {busy ? "Posting…" : "Post"}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
     </div>
   );

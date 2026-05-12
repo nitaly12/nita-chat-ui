@@ -11,15 +11,16 @@ import type { Chat, UserSummary } from "../../chat/types";
 type ChatSidebarProps = {
   chats: Chat[];
   activeRoomId: string;
+  /** Which main view is active (News Feed shortcut highlights when `feed`). */
+  mainPane: "feed" | "friends" | "chat";
   currentUsername: string | null;
   users: UserSummary[];
   /** Extra unread bumps when last preview changes (non-active rooms). */
   extraUnreadByRoom: Record<string, number>;
   /** Filters chat list by room name and last message preview. */
   searchQuery?: string;
+  onGoToFeed: () => void;
   onSelectRoom: (roomId: string) => void;
-  onStartPrivateChat: (userId: string) => void;
-  onCreateGroup: () => void;
   onLogout: () => void;
 };
 
@@ -51,13 +52,13 @@ const displayUnread = (
 export default function ChatSidebar({
   chats,
   activeRoomId,
+  mainPane,
   currentUsername,
   users,
   extraUnreadByRoom,
   searchQuery,
+  onGoToFeed,
   onSelectRoom,
-  onStartPrivateChat,
-  onCreateGroup,
   onLogout,
 }: ChatSidebarProps) {
   const normalizedQuery = (searchQuery ?? "").trim().toLowerCase();
@@ -69,68 +70,47 @@ export default function ChatSidebar({
           const preview = (chat.lastMessagePreview ?? "").toLowerCase();
           return title.includes(normalizedQuery) || preview.includes(normalizedQuery);
         });
-  const totalUnread = chats.reduce(
-    (sum, c) => sum + displayUnread(c, activeRoomId, extraUnreadByRoom),
-    0
-  );
   return (
-    <aside
-      className={`h-full w-full flex-col border-r border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900 md:w-[340px] md:flex ${
-        activeRoomId ? "hidden" : "flex"
-      }`}
-    >
-      <div className="border-b border-slate-200 p-5 dark:border-slate-700">
-        <div className="flex items-center justify-between">
-          <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">Message</h1>
-          <button
-            type="button"
-            className="inline-flex cursor-pointer h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-b from-blue-500 to-blue-700 text-lg font-semibold text-white shadow hover:from-blue-600 hover:to-blue-800"
-            title="New group"
-            aria-label="New group"
-            onClick={onCreateGroup}
-          >
-            +
-          </button>
-        </div> 
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Checkout your conversation</p>
+    <aside className="flex h-full min-h-0 w-full shrink-0 flex-col overflow-hidden border-r border-[#e5e8e0] bg-white dark:border-slate-700 dark:bg-slate-900 md:w-[300px] lg:w-[320px]">
+      <div className="shrink-0 space-y-2 border-b border-[#ebe8e2] p-4 dark:border-slate-700">
+        <button
+          type="button"
+          onClick={onGoToFeed}
+          className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition dark:border-slate-600 dark:text-slate-100 ${
+            mainPane === "feed"
+              ? "border-[#7d9b84]/55 bg-[#f0f4ee] text-slate-900 ring-1 ring-[#7d9b84]/30 dark:bg-slate-800/90"
+              : "border-[#dfe6db] bg-white text-slate-800 hover:bg-[#f6f5f1] dark:bg-slate-800 dark:hover:bg-slate-700/80"
+          }`}
+        >
+          <span aria-hidden>📰</span>
+          News Feed
+        </button>
+        {/* <button
+          type="button"
+          onClick={onGoToFeed}
+          className={`flex w-full items-start gap-3 rounded-2xl border p-3 text-left transition dark:border-slate-600 ${
+            mainPane === "feed"
+              ? "border-[#7d9b84]/55 bg-[#f0f4ee] ring-1 ring-[#7d9b84]/30 dark:bg-slate-800/90"
+              : "border-[#e0e6df] bg-[#faf9f6] hover:bg-[#f3f2ed] dark:bg-slate-800/60 dark:hover:bg-slate-800"
+          }`}
+        >
+          <span className="text-xl leading-none" aria-hidden>
+            🏠
+          </span>
+          <span className="text-xl leading-none opacity-90" aria-hidden>
+            💬
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold text-slate-900 dark:text-slate-100">Home Feed</p>
+            <p className="text-xs text-slate-500 dark:text-slate-400">Checkout your conversation.</p>
+          </div>
+        </button> */}
       </div>
 
-      {/* <div className="flex border-b border-slate-200 text-sm font-medium dark:border-slate-700">
-        <button
-          type="button"
-          className="flex-1 border-b-2 border-blue-500 px-3 py-3 text-blue-600 dark:border-blue-400 dark:text-blue-400"
-        >
-          All ({filteredChats.length})
-        </button>
-        <button
-          type="button"
-          className="flex-1 px-3 py-3 text-slate-500 dark:text-slate-400"
-        >
-          Unread ({totalUnread})
-        </button>
-      </div> */}
-
-      <div className="border-b border-slate-200 p-3 dark:border-slate-700">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-          Quick Start
+      <div className="shrink-0 border-b border-slate-200 bg-[#f8f8f8] px-3 py-2 dark:border-slate-700 dark:bg-slate-900">
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-800 dark:text-slate-100">
+          My Friends
         </p>
-        <div className="max-h-28 space-y-1 overflow-y-auto">
-          {users.slice(0, 8).map((user) => (
-            <button
-              key={user.id}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800"
-              type="button"
-              onClick={() => onStartPrivateChat(user.id)}
-            >
-              <span
-                className={`inline-block h-2 w-2 shrink-0 rounded-full ${
-                  user.online ? "bg-green-500" : "bg-slate-300"
-                }`}
-              />
-              <span className="min-w-0 truncate">{user.username}</span>
-            </button>
-          ))}
-        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto divide-y divide-slate-200 dark:divide-slate-700">
@@ -148,7 +128,7 @@ export default function ChatSidebar({
               type="button"
               onClick={() => onSelectRoom(chat.id)}
               className={`w-full px-4 py-3 text-left transition ${
-                activeRoomId === chat.id
+                mainPane === "chat" && activeRoomId === chat.id
                   ? "bg-slate-100 dark:bg-slate-800"
                   : "bg-white hover:bg-slate-50 dark:bg-slate-900 dark:hover:bg-slate-800"
               }`}

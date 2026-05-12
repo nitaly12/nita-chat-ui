@@ -153,8 +153,11 @@ export default function ChatWindow({
 
   if (!activeChat) {
     return (
-      <main className="hidden flex-1 items-center justify-center bg-slate-100 text-slate-500 dark:bg-slate-900 dark:text-slate-400 md:flex">
-        Select or start a conversation
+      <main className="flex min-h-0 flex-1 flex-col items-center justify-center bg-slate-50 px-6 text-center text-slate-500 dark:bg-slate-950/80 dark:text-slate-400">
+        <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Select a conversation</p>
+        <p className="mt-2 max-w-xs text-xs text-slate-400 dark:text-slate-500">
+          Choose a chat from the list, or start one from Quick Start.
+        </p>
       </main>
     );
   }
@@ -171,7 +174,7 @@ export default function ChatWindow({
       : "Offline";
 
   return (
-    <main className={`flex flex-1 flex-col ${themeClass}`}>
+    <main className={`flex min-h-0 flex-1 flex-col ${themeClass}`}>
       <header className="border-b border-slate-200 bg-white px-6 py-4 dark:border-slate-700 dark:bg-slate-900">
         {notice ? (
           <div className="mb-3 flex items-start justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">

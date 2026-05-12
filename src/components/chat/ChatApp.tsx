@@ -21,12 +21,16 @@ import { announceChatDebugOnce, isChatDebug } from "../../chat/chatDebug";
 import { emitVoiceMessageSocket } from "../../chat/voiceSocketEmit";
 import type { Chat, ChatMessage, MyUserProfile, UserSummary } from "../../chat/types";
 import ChatSidebar from "./ChatSidebar";
+import FriendsMainView from "./FriendsMainView";
+import HomeFeed from "./HomeFeed";
+import FeedRightRail from "./FeedRightRail";
 import TopAlert from "./TopAlert";
 import ChatWindow from "./ChatWindow";
 import ProfileSettingsModal from "./ProfileSettingsModal";
 import { useChatRoomRealtime } from "./useChatRoomRealtime";
 import { useChatSeenReceipt } from "./useChatSeenReceipt";
 import ChatSkeleton from "../skeleton/ChatSkeleton";
+import { FriendshipUiProvider } from "../../contexts/FriendshipUiContext";
 
 function dedupeMessagesKeepFirst(items: ChatMessage[]): ChatMessage[] {
   const seen = new Set<string>();
@@ -78,8 +82,11 @@ export default function ChatApp() {
   const [topAlert, setTopAlert] = useState<GlobalAlertState>(null);
   const [appLoading, setAppLoading] = useState(false);
   const [chatSearchQuery, setChatSearchQuery] = useState("");
+  /** Center column: Feed vs Friends hub vs chat room. */
+  const [mainPane, setMainPane] = useState<"feed" | "friends" | "chat">("feed");
   const [authToastPreview, setAuthToastPreview] = useState<string | null>(null);
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [feedRefreshNonce, setFeedRefreshNonce] = useState(0);
   const reactionReqSeqRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
@@ -97,6 +104,7 @@ export default function ChatApp() {
     setMessages([]);
     setUsers([]);
     setActiveRoomId("");
+    setMainPane("feed");
     setExtraUnreadByRoom({});
     lastPreviewRef.current = {};
     chatsHydratedRef.current = false;
@@ -129,6 +137,33 @@ export default function ChatApp() {
     () => chats.find((chat) => chat.id === activeRoomId) ?? null,
     [activeRoomId, chats]
   );
+  const feedPeerUsers = useMemo(() => {
+    const byId = new Map<string, UserSummary>();
+    for (const chat of chats) {
+      if (chat.isGroup) continue;
+      for (const m of chat.members ?? []) {
+        if (!m.id) continue;
+        if (currentUserId && String(m.id) === String(currentUserId)) continue;
+        const username = (m.username ?? m.name ?? "").trim();
+        if (
+          currentUsername &&
+          username &&
+          username.toLowerCase() === currentUsername.trim().toLowerCase()
+        ) {
+          continue;
+        }
+        const fromUsers = users.find((u) => String(u.id) === String(m.id)) ?? null;
+        byId.set(String(m.id), {
+          id: String(m.id),
+          username: (fromUsers?.username ?? username) || `User ${String(m.id)}`,
+          displayName: fromUsers?.displayName ?? null,
+          avatarUrl: fromUsers?.avatarUrl ?? m.avatarUrl ?? null,
+          online: fromUsers?.online ?? m.online ?? m.isOnline,
+        });
+      }
+    }
+    return Array.from(byId.values());
+  }, [chats, currentUserId, currentUsername, users]);
 
   const markRoomAsRead = useCallback(async () => {
     if (!token || !activeRoomId) return;
@@ -228,6 +263,16 @@ export default function ChatApp() {
     }
   }, [token, handleApiError]);
 
+  const refreshChatsAndUsersAfterSocial = useCallback(async () => {
+    await loadAppData();
+    setFeedRefreshNonce((v) => v + 1);
+  }, [loadAppData]);
+
+  const startPrivateChatForAcceptedFriend = useCallback(
+    (peerUserId: string) => chatApi.startPrivateChat(token, peerUserId),
+    [token]
+  );
+
   const refreshHistory = useCallback(async () => {
     if (!token || !activeRoomId) return;
     try {
@@ -261,8 +306,10 @@ export default function ChatApp() {
       setNewGroupName("");
       setCreateGroupMemberIds([]);
       await loadAppData();
-      if (roomId) setActiveRoomId(roomId);
-      else setChatNotice("Group created, but the server did not return a room id.");
+      if (roomId) {
+        setActiveRoomId(roomId);
+        setMainPane("chat");
+      } else setChatNotice("Group created, but the server did not return a room id.");
     } catch (err) {
       handleApiError(err, "Failed to create group.");
     } finally {
@@ -774,6 +821,12 @@ export default function ChatApp() {
   }
 
   return (
+    <FriendshipUiProvider
+      key={token || "session"}
+      token={token}
+      onRefreshChatsAndUsers={refreshChatsAndUsersAfterSocial}
+      startPrivateChat={startPrivateChatForAcceptedFriend}
+    >
     <div className="h-screen bg-gradient-to-br from-[#e8efe8] via-[#f2ede6] to-[#e3ecf5] p-0 dark:from-slate-950 dark:via-slate-900 dark:to-slate-900 sm:p-3">
       <TopAlert
         key={topAlert?.id ?? "top-alert-empty"}
@@ -786,18 +839,63 @@ export default function ChatApp() {
           if (!topAlert?.roomId) return;
           setExtraUnreadByRoom((p) => ({ ...p, [topAlert.roomId]: 0 }));
           setActiveRoomId(topAlert.roomId);
+          setMainPane("chat");
           setTopAlert(null);
         }}
       />
-      <div className="mx-auto flex h-full max-w-[1400px] flex-col overflow-hidden border border-[#c7d5cb] bg-[#fbfaf6] shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:rounded-3xl">
-        <header className="relative flex items-center justify-between gap-2 border-b border-[#d7e2d9] bg-[#fcfbf7] px-3 py-3 dark:border-slate-700 dark:bg-slate-900/80 sm:gap-4 sm:px-5">
+      <div className="mx-auto flex h-full max-w-[1600px] flex-col overflow-hidden border border-[#c7d5cb] bg-[#fbfaf6] shadow-sm dark:border-slate-700 dark:bg-slate-900 sm:rounded-3xl">
+        <header className="relative flex flex-wrap items-center justify-between gap-2 border-b border-[#d7e2d9] bg-[#fcfbf7] px-3 py-3 dark:border-slate-700 dark:bg-slate-900/80 sm:gap-4 sm:px-5">
           {chatDebugOn ? (
             <div className="absolute left-1/2 top-2 z-50 -translate-x-1/2 rounded-full border border-amber-400 bg-amber-100 px-3 py-1 text-[10px] font-semibold text-amber-950 shadow dark:border-amber-500 dark:bg-amber-950/90 dark:text-amber-100">
               CHAT_DEBUG — see DevTools console + voice bubble panels
             </div>
           ) : null}
-          <div className="flex min-w-0 flex-1 items-center gap-3">
-            <div className="relative hidden w-full max-w-md sm:block">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:gap-3">
+            <nav
+              className="order-1 flex shrink-0 items-center gap-0.5 rounded-2xl border border-[#d7e2d9] bg-[#f7f4ec] p-1 dark:border-slate-600 dark:bg-slate-800/80"
+              aria-label="Main views"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setMainPane("feed");
+                  setActiveRoomId("");
+                }}
+                className={`rounded-xl px-3 py-1.5 text-xs font-semibold sm:text-sm ${
+                  mainPane === "feed"
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+                    : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+                }`}
+              >
+                Feed
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMainPane("friends");
+                  setActiveRoomId("");
+                }}
+                className={`rounded-xl px-3 py-1.5 text-xs font-semibold sm:text-sm ${
+                  mainPane === "friends"
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+                    : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+                }`}
+              >
+                Friends
+              </button>
+              <button
+                type="button"
+                onClick={() => setMainPane("chat")}
+                className={`rounded-xl px-3 py-1.5 text-xs font-semibold sm:text-sm ${
+                  mainPane === "chat"
+                    ? "bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100"
+                    : "text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100"
+                }`}
+              >
+                Messages
+              </button>
+            </nav>
+            <div className="relative order-3 hidden w-full max-w-md sm:order-2 sm:block sm:min-w-0 sm:flex-1">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
                 🔎
               </span>
@@ -857,39 +955,57 @@ export default function ChatApp() {
             </button>
           </div>
         </header>
-        <div className="flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 flex-col md:flex-row">
+        <div
+          className={
+            mainPane === "chat" && !activeRoomId.trim()
+              ? "flex min-h-0 w-full flex-1 flex-col md:h-full md:w-[300px] md:shrink-0 lg:w-[320px]"
+              : "hidden min-h-0 md:flex md:h-full md:w-[300px] md:shrink-0 lg:w-[320px]"
+          }
+        >
         <ChatSidebar
           chats={chats}
           activeRoomId={activeRoomId}
+          mainPane={mainPane}
           currentUsername={currentUsername}
           users={users}
           extraUnreadByRoom={extraUnreadByRoom}
           searchQuery={chatSearchQuery}
+          onGoToFeed={() => {
+            setMainPane("feed");
+            setActiveRoomId("");
+          }}
           onSelectRoom={(id) => {
             setExtraUnreadByRoom((p) => ({ ...p, [id]: 0 }));
             setActiveRoomId(id);
-          }}
-          onStartPrivateChat={async (userId) => {
-            try {
-              const roomId = await chatApi.startPrivateChat(token, userId);
-              await loadAppData();
-              if (roomId) setActiveRoomId(roomId);
-            } catch (err) {
-              handleApiError(err, "Failed to start private chat.");
-            }
-          }}
-          onCreateGroup={() => {
-            setCreateGroupLocalError("");
-            setNewGroupName("");
-            setCreateGroupMemberIds([]);
-            setShowCreateGroup(true);
+            setMainPane("chat");
           }}
           onLogout={() => {
             forceLogout("");
           }}
         />
+        </div>
 
-        <ChatWindow
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#f9f7f2] dark:bg-slate-950/35">
+          {mainPane === "feed" ? (
+            <HomeFeed
+              key={feedRefreshNonce}
+              token={token}
+              viewerAvatarUrl={profileAvatarUrl}
+              viewerDisplayName={profileDisplayName ?? currentUsername}
+              mode="news"
+              newsUsers={feedPeerUsers}
+            />
+          ) : mainPane === "friends" ? (
+            <FriendsMainView
+              token={token}
+              users={users}
+              chats={chats}
+              currentUsername={currentUsername}
+              currentUserId={currentUserId}
+            />
+          ) : (
+            <ChatWindow
           activeChat={activeChat}
           messages={messages}
           users={users}
@@ -900,7 +1016,9 @@ export default function ChatApp() {
           notice={chatNotice}
           onDismissNotice={() => setChatNotice("")}
           onMarkRead={markRoomAsRead}
-          onClose={() => setActiveRoomId("")}
+          onClose={() => {
+            setActiveRoomId("");
+          }}
           onSend={async (content, parentMessageId) => {
             if (!activeRoomId) return;
             const parentMessage =
@@ -1226,7 +1344,10 @@ export default function ChatApp() {
               }
             }
           }}
-        />
+            />
+          )}
+        </section>
+        <FeedRightRail token={token} users={users} currentUsername={currentUsername} />
         </div>
       </div>
 
@@ -1333,5 +1454,6 @@ export default function ChatApp() {
         }}
       />
     </div>
+    </FriendshipUiProvider>
   );
 }

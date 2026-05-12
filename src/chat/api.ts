@@ -1,10 +1,14 @@
 import axios from "axios";
 import { chatDebug, isChatDebug } from "./chatDebug";
+import { extractUploadUrlFromResponse } from "./extractUploadUrl";
+import { putUserProfileCoverUpdate, resolveChatBackendFetchUrl } from "./userProfileCoverHttp";
 import type {
   AuthResult,
   Chat,
   ChatMember,
   ChatMessage,
+  IncomingFriendRequest,
+  FriendshipSnapshot,
   MyUserProfile,
   PostComment,
   UserPost,
@@ -26,9 +30,17 @@ export function readAxiosErrorMessage(err: unknown): string | null {
   return null;
 }
 
+/**
+ * Spring API lives on the backend origin (e.g. `http://localhost:8080`), not on the Next dev host.
+ * - `NEXT_PUBLIC_API_BASE` — preferred in `.env.local` (e.g. `http://localhost:8080`).
+ * - `BACKEND_BASE_URL` — same as `next.config` rewrites target when you proxy `/backend`.
+ * - Dev fallback: direct `http://localhost:8080` so `/api/...` hits Spring without relying on rewrites.
+ * - Production fallback: same-origin `/backend` proxy (see `next.config.ts` rewrites).
+ */
 const RESOLVED_BACKEND_ORIGIN = (
   process.env.NEXT_PUBLIC_API_BASE?.trim() ||
-  "/backend"
+  process.env.BACKEND_BASE_URL?.trim() ||
+  (process.env.NODE_ENV === "development" ? "http://localhost:8080" : "/backend")
 ).replace(/\/+$/, "");
 
 export const backendApi = axios.create({
@@ -43,6 +55,45 @@ let roomReadEndpointAvailable = true;
 const authHeaders = (token: string) => ({
   Authorization: `Bearer ${token}`,
 });
+type FriendshipRowsCacheEntry = {
+  rows: unknown[];
+  fetchedAt: number;
+};
+const FRIENDSHIP_ROWS_TTL_MS = 15_000;
+const friendshipRowsCacheByToken = new Map<string, FriendshipRowsCacheEntry>();
+const friendshipRowsInflightByToken = new Map<string, Promise<unknown[]>>();
+function clearFriendshipRowsCache(token?: string): void {
+  if (token) {
+    friendshipRowsCacheByToken.delete(token);
+    friendshipRowsInflightByToken.delete(token);
+    return;
+  }
+  friendshipRowsCacheByToken.clear();
+  friendshipRowsInflightByToken.clear();
+}
+async function getFriendshipRowsCached(token: string): Promise<unknown[]> {
+  const now = Date.now();
+  const cached = friendshipRowsCacheByToken.get(token);
+  if (cached && now - cached.fetchedAt < FRIENDSHIP_ROWS_TTL_MS) {
+    return cached.rows;
+  }
+  const inflight = friendshipRowsInflightByToken.get(token);
+  if (inflight) return inflight;
+  const req = backendApi
+    .get("/api/friendships", { headers: authHeaders(token) })
+    .then((response) => {
+      const rows = unwrapList(response.data, ["data", "content", "items", "friendships"]);
+      friendshipRowsCacheByToken.set(token, { rows, fetchedAt: Date.now() });
+      friendshipRowsInflightByToken.delete(token);
+      return rows;
+    })
+    .catch((e) => {
+      friendshipRowsInflightByToken.delete(token);
+      throw e;
+    });
+  friendshipRowsInflightByToken.set(token, req);
+  return req;
+}
 /** Public origin for `<audio src>` and `fetch` uploads (same as axios `backendApi` baseURL). */
 export const CHAT_BACKEND_ORIGIN = RESOLVED_BACKEND_ORIGIN;
 const BACKEND_ORIGIN = CHAT_BACKEND_ORIGIN;
@@ -77,52 +128,36 @@ export const parseJwtIdentity = (
 ): { userId: string | null; username: string | null } => {
   const p = decodeJwtPayload(token);
   if (!p) return { userId: null, username: null };
-  const uid = p.userId ?? p.uid ?? p.id;
+  const uid = p.userId ?? p.uid ?? p.id ?? p.user_id ?? p.memberId ?? p.userID ?? p.accountId;
   return {
     userId: uid != null ? String(uid) : null,
     username: typeof p.sub === "string" ? p.sub : null,
   };
 };
 
+/** Same as {@link parseJwtIdentity} plus numeric `sub` and other common claim keys (friendship direction). */
+function viewerUserIdFromToken(token: string): string | null {
+  const j = parseJwtIdentity(token);
+  if (j.userId?.trim()) return j.userId.trim();
+  const p = decodeJwtPayload(token);
+  if (!p) return null;
+  const sub = p.sub;
+  if (typeof sub === "string" && /^\d+$/.test(sub.trim())) return sub.trim();
+  return null;
+}
+
 const mapMember = (value: unknown): ChatMember => {
   const v = (value ?? {}) as Record<string, unknown>;
   const userObj = v.user && typeof v.user === "object" ? (v.user as Record<string, unknown>) : null;
-  const username =
-    v.username ??
-    v.userName ??
-    v.user_name ??
-    v.name ??
-    v.displayName ??
-    v.display_name ??
-    (typeof userObj?.username === "string" ? userObj.username : undefined) ??
-    (typeof userObj?.name === "string" ? userObj.name : undefined);
-  const onlineVal =
-    v.online ??
-    v.isOnline ??
-    v.is_online ??
-    v.onlineStatus ??
-    v.status ??
-    userObj?.online ??
-    userObj?.is_online;
+  const username = v.username
+  const onlineVal = v.online
   let online: boolean | undefined;
   if (typeof onlineVal === "boolean") online = onlineVal;
   else if (typeof onlineVal === "string") {
     const s = onlineVal.toLowerCase();
     online = s.includes("online") || s === "true";
   }
-  const avatarRaw =
-    v.avatarUrl ??
-    v.avatar_url ??
-    v.profileImageUrl ??
-    v.profile_image_url ??
-    v.imageUrl ??
-    v.photoUrl ??
-    userObj?.avatarUrl ??
-    userObj?.avatar_url ??
-    userObj?.profileImageUrl ??
-    userObj?.profile_image_url ??
-    userObj?.imageUrl ??
-    userObj?.photoUrl;
+  const avatarRaw = v.avatarUrl
   const avatarUrl =
     typeof avatarRaw === "string" && avatarRaw.trim().length > 0 ? avatarRaw.trim() : undefined;
   const idRaw = v.id ?? v.userId ?? v.user_id ?? userObj?.id ?? userObj?.userId;
@@ -955,6 +990,24 @@ export function mapPostComment(value: unknown): PostComment {
   };
 }
 
+function mapReactionSummaryFromDto(v: Record<string, unknown>): Record<string, number> | undefined {
+  const raw = v.reactionSummary ?? v.reaction_summary;
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const out: Record<string, number> = {};
+  for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
+    const key = k.trim();
+    if (!key) continue;
+    const n =
+      typeof val === "number" && Number.isFinite(val)
+        ? val
+        : typeof val === "string" && /^\d+$/.test(val.trim())
+          ? Number(val.trim())
+          : 0;
+    if (n > 0) out[key] = n;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 const mapUserPost = (value: unknown): UserPost => {
   const v = (value ?? {}) as Record<string, unknown>;
   const idRaw = v.id ?? v.postId ?? v.post_id;
@@ -985,6 +1038,11 @@ const mapUserPost = (value: unknown): UserPost => {
       : typeof reactionRaw === "string" && /^\d+$/.test(reactionRaw)
         ? Number(reactionRaw)
         : undefined;
+  const reactionSummary = mapReactionSummaryFromDto(v);
+  const reactionCountFromSummary =
+    reactionSummary && (reactionCount == null || !Number.isFinite(reactionCount))
+      ? Object.values(reactionSummary).reduce((a, b) => a + b, 0)
+      : undefined;
   const commentRaw = v.commentCount ?? v.commentsCount ?? v.comment_count;
   const commentCount =
     typeof commentRaw === "number"
@@ -1005,14 +1063,26 @@ const mapUserPost = (value: unknown): UserPost => {
     content,
     createdAt: createdAt ?? undefined,
     mediaUrl,
-    reactionCount,
+    reactionCount: reactionCount ?? reactionCountFromSummary,
+    reactionSummary,
     commentCount,
     myReaction: myReaction ?? undefined,
     comments: comments && comments.length > 0 ? comments : undefined,
   };
 };
 
-function mapMyUserProfileFromDto(v: Record<string, unknown>): MyUserProfile {
+/** Spring `PUT /api/user/profile/update` may return `{ user: {...} }` or `{ data: {...} }`. */
+function unwrapUserProfilePutPayload(v: Record<string, unknown>): Record<string, unknown> {
+  for (const k of ["user", "data", "profile", "body", "result", "payload"] as const) {
+    const inner = v[k];
+    if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+      return inner as Record<string, unknown>;
+    }
+  }
+  return v;
+}
+
+function mapMyUserProfileFromJson(v: Record<string, unknown>): MyUserProfile {
   const idRaw = v.id ?? v.userId ?? v.user_id;
   const username =
     firstNonEmptyString(v.username, v.userName, v.user_name, v.name, v.email) ?? null;
@@ -1036,15 +1106,299 @@ function mapMyUserProfileFromDto(v: Record<string, unknown>): MyUserProfile {
     v.photo_url
   );
   const avatarUrl = avatarRaw ? (toAbsoluteBackendUrl(avatarRaw) ?? avatarRaw) : null;
+  const coverRaw = firstNonEmptyString(
+    v.coverPhotoUrl,
+    v.cover_photo_url,
+    v.coverImage,
+    v.cover_image,
+    v.coverUrl,
+    v.cover_url,
+    v.bannerUrl,
+    v.banner_url
+  );
+  const coverPhotoUrl = coverRaw ? (toAbsoluteBackendUrl(coverRaw) ?? coverRaw) : null;
   const themeRaw = String(v.theme ?? v.colorScheme ?? v.appearance ?? "").toLowerCase();
   const theme: "light" | "dark" = themeRaw === "dark" ? "dark" : "light";
+  const bio =
+    firstNonEmptyString(v.bio, v.about, v.description, v.userBio, v.user_bio) ?? null;
   return {
     id: idRaw != null ? String(idRaw) : null,
     username,
     displayName,
     avatarUrl,
+    coverPhotoUrl,
+    bio,
     theme,
   };
+}
+
+function mapMyProfileFromUserProfilePutBody(bodyText: string): MyUserProfile | null {
+  if (!bodyText.trim()) return null;
+  try {
+    const data = JSON.parse(bodyText) as Record<string, unknown>;
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      return mapMyUserProfileFromJson(unwrapUserProfilePutPayload(data));
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+/** Ids of users involved in a friendship row (flat + nested Spring DTOs). */
+function friendshipRowUserIds(v: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const push = (x: unknown): void => {
+    if (x == null) return;
+    const s = String(x).trim();
+    if (s) out.push(s);
+  };
+  push(v.requesterId);
+  push(v.requester_id);
+  push(v.receiverId);
+  push(v.receiver_id);
+  push(v.senderId);
+  push(v.fromUserId);
+  push(v.toUserId);
+  push(v.userId);
+  push(v.friendId);
+  push(v.targetUserId);
+  push(v.user1Id);
+  push(v.user2Id);
+  const nestedId = (key: string): void => {
+    const n = v[key];
+    if (n && typeof n === "object" && !Array.isArray(n)) {
+      const u = n as Record<string, unknown>;
+      push(u.id ?? u.userId ?? u.user_id);
+    }
+  };
+  nestedId("requester");
+  nestedId("receiver");
+  nestedId("sender");
+  nestedId("friend");
+  nestedId("user");
+  nestedId("otherUser");
+  return Array.from(new Set(out));
+}
+
+function friendshipRowLooksExplicitlyPending(v: Record<string, unknown>): boolean {
+  const s = String(
+    v.status ?? v.state ?? v.friendshipStatus ?? v.requestStatus ?? v.relationshipStatus ?? ""
+  )
+    .trim()
+    .toUpperCase();
+  return (
+    s.includes("PENDING") ||
+    s.includes("REQUESTED") ||
+    s.includes("WAITING") ||
+    s === "SENT" ||
+    s === "OUTGOING" ||
+    s === "RECEIVED" ||
+    s === "INCOMING"
+  );
+}
+
+/** Who sent vs who received (Spring `requesterId` / `receiverId` or nested `requester` / `receiver`). */
+function friendshipRowDirectedParties(v: Record<string, unknown>): {
+  requesterId: string | null;
+  receiverId: string | null;
+} {
+  const pick = (x: unknown): string | null => {
+    if (x == null) return null;
+    const s = String(x).trim();
+    return s.length > 0 ? s : null;
+  };
+  let requesterId =
+    pick(v.requesterId) ??
+    pick(v.requester_id) ??
+    pick(v.senderId) ??
+    pick(v.fromUserId) ??
+    pick(v.initiatorId) ??
+    pick(v.requesterUserId);
+  let receiverId =
+    pick(v.receiverId) ??
+    pick(v.receiver_id) ??
+    pick(v.addresseeId) ??
+    pick(v.toUserId) ??
+    pick(v.targetUserId) ??
+    pick(v.recipientId);
+
+  const rNest = v.requester ?? v.sender ?? v.fromUser;
+  if (!requesterId && rNest && typeof rNest === "object" && !Array.isArray(rNest)) {
+    const u = rNest as Record<string, unknown>;
+    requesterId = pick(u.id ?? u.userId ?? u.user_id);
+  }
+  const recNest = v.receiver ?? v.addressee ?? v.toUser ?? v.recipient;
+  if (!receiverId && recNest && typeof recNest === "object" && !Array.isArray(recNest)) {
+    const u = recNest as Record<string, unknown>;
+    receiverId = pick(u.id ?? u.userId ?? u.user_id);
+  }
+
+  if (!requesterId && !receiverId) {
+    const uidFlat = pick(v.userId);
+    const fidFlat = pick(v.friendId);
+    if (uidFlat && fidFlat) {
+      requesterId = uidFlat;
+      receiverId = fidFlat;
+    }
+  }
+  return { requesterId, receiverId };
+}
+
+/**
+ * Resolve friendship UI for `peerUserId` using the signed-in `viewerUserId` so PENDING means
+ * "I sent" vs "they sent" (RECEIVED) when the API only sends generic PENDING + requester/receiver.
+ */
+function parseFriendshipSnapshotForPeer(
+  row: unknown,
+  viewerUserId: string | null | undefined,
+  peerUserId: string
+): FriendshipSnapshot {
+  if (!row || typeof row !== "object") return { status: null };
+  const v = row as Record<string, unknown>;
+  const me = viewerUserId != null ? String(viewerUserId).trim() : "";
+  const peer = String(peerUserId).trim();
+
+  const base = parseFriendshipBody(row);
+  if (base.status === "ACCEPTED") return base;
+  /** API already distinguished incoming vs outgoing — do not override with heuristics. */
+  if (base.status === "RECEIVED") return base;
+
+  const { requesterId, receiverId } = friendshipRowDirectedParties(v);
+  const pendingish =
+    base.status === "PENDING" ||
+    (base.status === null && friendshipRowLooksExplicitlyPending(v));
+
+  const rid = base.requestId;
+  const eq = (a: string | null, b: string) => Boolean(a && b && String(a) === String(b));
+
+  if (me && peer && requesterId && receiverId && pendingish) {
+    if (eq(requesterId, me) && eq(receiverId, peer)) {
+      return { status: "PENDING", requestId: rid };
+    }
+    if (eq(requesterId, peer) && eq(receiverId, me)) {
+      return { status: "RECEIVED", requestId: rid };
+    }
+  }
+
+  if (me && peer && pendingish && requesterId && !receiverId) {
+    if (eq(requesterId, peer)) return { status: "RECEIVED", requestId: rid };
+    if (eq(requesterId, me)) return { status: "PENDING", requestId: rid };
+  }
+
+  if (me && peer && pendingish && !requesterId && receiverId) {
+    if (eq(receiverId, me)) return { status: "RECEIVED", requestId: rid };
+    if (eq(receiverId, peer)) return { status: "PENDING", requestId: rid };
+  }
+
+  if (me && peer && pendingish && !requesterId && !receiverId) {
+    const pick = (x: unknown): string | null => {
+      if (x == null) return null;
+      const s = String(x).trim();
+      return s.length > 0 ? s : null;
+    };
+    const initiatorId =
+      pick(v.initiatedByUserId) ??
+      pick(v.initiatorId) ??
+      pick(v.initiatedBy) ??
+      pick(v.createdById) ??
+      pick(v.createdByUserId);
+    if (initiatorId) {
+      if (eq(initiatorId, me)) return { status: "PENDING", requestId: rid };
+      if (eq(initiatorId, peer)) return { status: "RECEIVED", requestId: rid };
+    }
+  }
+
+  if (base.status === "PENDING") return base;
+
+  const statusStr = String(
+    v.status ?? v.state ?? v.friendshipStatus ?? v.requestStatus ?? v.relationshipStatus ?? ""
+  )
+    .trim()
+    .toUpperCase();
+  if (statusStr.includes("REJECT") || statusStr.includes("DECLINE")) {
+    return { status: null };
+  }
+  if (!friendshipRowLooksExplicitlyPending(v)) {
+    return { status: "ACCEPTED" };
+  }
+  return { status: null };
+}
+
+/** Normalize friendship DTOs from common Spring shapes. */
+function parseFriendshipBody(v: unknown): FriendshipSnapshot {
+  if (!v || typeof v !== "object") return { status: null };
+  const o = v as Record<string, unknown>;
+  const inner =
+    o.data && typeof o.data === "object" && !Array.isArray(o.data)
+      ? (o.data as Record<string, unknown>)
+      : o.friendship && typeof o.friendship === "object"
+        ? (o.friendship as Record<string, unknown>)
+        : null;
+  const src = inner ?? o;
+
+  const acceptedFlag = src.accepted ?? src.confirmed ?? o.accepted ?? o.confirmed;
+  if (acceptedFlag === true) {
+    return { status: "ACCEPTED" };
+  }
+  const acceptedAt = firstNonEmptyString(
+    src.acceptedAt,
+    src.accepted_at,
+    src.friendsSince,
+    src.friends_since
+  );
+  if (acceptedAt) {
+    return { status: "ACCEPTED" };
+  }
+
+  const statusRaw = String(
+    src.status ??
+      src.state ??
+      src.friendshipStatus ??
+      src.requestStatus ??
+      src.relationshipStatus ??
+      o.status ??
+      ""
+  )
+    .trim()
+    .toUpperCase();
+  const idRaw =
+    src.requestId ??
+    src.friendRequestId ??
+    src.id ??
+    src.request_id ??
+    o.requestId ??
+    o.friendRequestId;
+  const requestId =
+    idRaw != null && String(idRaw).trim().length > 0 ? String(idRaw).trim() : undefined;
+  const incoming = Boolean(
+    src.incoming ?? src.received ?? src.isIncoming ?? src.incomingRequest ?? o.incoming
+  );
+
+  if (
+    statusRaw === "ACCEPTED" ||
+    statusRaw === "FRIEND" ||
+    statusRaw === "FRIENDS" ||
+    statusRaw === "ACTIVE" ||
+    statusRaw === "APPROVED" ||
+    statusRaw === "CONFIRMED" ||
+    statusRaw === "COMPLETED"
+  ) {
+    return { status: "ACCEPTED" };
+  }
+  if (statusRaw === "RECEIVED" || statusRaw === "INCOMING") {
+    return { status: "RECEIVED", requestId };
+  }
+  if (statusRaw === "OUTGOING" || statusRaw === "SENT") {
+    return { status: "PENDING", requestId };
+  }
+  if (statusRaw === "PENDING" || statusRaw === "REQUESTED" || statusRaw === "WAITING") {
+    return incoming ? { status: "RECEIVED", requestId } : { status: "PENDING", requestId };
+  }
+  if (statusRaw === "NONE" || statusRaw === "REJECTED" || statusRaw === "DECLINED") {
+    return { status: null };
+  }
+  return { status: null };
 }
 
 export const chatApi = {
@@ -1145,38 +1499,7 @@ export const chatApi = {
   },
 
   mapMyUserProfileFromDto(v: Record<string, unknown>): MyUserProfile {
-    const idRaw = v.id ?? v.userId ?? v.user_id;
-    const username =
-      firstNonEmptyString(v.username, v.userName, v.user_name, v.name, v.email) ?? null;
-    const displayName =
-      firstNonEmptyString(
-        v.displayName,
-        v.display_name,
-        v.fullName,
-        v.full_name,
-        v.nickname,
-        v.nickName
-      ) ?? username;
-    const avatarRaw = firstNonEmptyString(
-      v.avatarUrl,
-      v.avatar_url,
-      v.profileImageUrl,
-      v.profile_image_url,
-      v.imageUrl,
-      v.image_url,
-      v.photoUrl,
-      v.photo_url
-    );
-    const avatarUrl = avatarRaw ? (toAbsoluteBackendUrl(avatarRaw) ?? avatarRaw) : null;
-    const themeRaw = String(v.theme ?? v.colorScheme ?? v.appearance ?? "").toLowerCase();
-    const theme: "light" | "dark" = themeRaw === "dark" ? "dark" : "light";
-    return {
-      id: idRaw != null ? String(idRaw) : null,
-      username,
-      displayName,
-      avatarUrl,
-      theme,
-    };
+    return mapMyUserProfileFromJson(v);
   },
 
   async getMyProfile(token: string): Promise<MyUserProfile> {
@@ -1188,11 +1511,18 @@ export const chatApi = {
 
   /**
    * Updates the signed-in user via `PUT /api/users/me`.
-   * Sends only fields you pass (`displayName`, `avatarUrl`, `theme`). Avoid `username` unless your API allows it.
+   * Sends only fields you pass. Avoid `username` unless your API allows it.
    */
   async updateMyProfile(
     token: string,
-    payload: { displayName?: string; avatarUrl?: string; theme?: "light" | "dark" }
+    payload: {
+      displayName?: string;
+      avatarUrl?: string;
+      theme?: "light" | "dark";
+      /** Omit to leave unchanged; pass "" or null to clear if the API supports it. */
+      bio?: string | null;
+      coverPhotoUrl?: string | null;
+    }
   ): Promise<MyUserProfile> {
     const body: Record<string, unknown> = {};
     if (payload.displayName != null && String(payload.displayName).trim() !== "") {
@@ -1204,6 +1534,17 @@ export const chatApi = {
     if (payload.theme === "light" || payload.theme === "dark") {
       body.theme = payload.theme;
     }
+    if (payload.bio !== undefined) {
+      body.bio = payload.bio == null ? "" : String(payload.bio);
+    }
+    if (payload.coverPhotoUrl !== undefined) {
+      const c = payload.coverPhotoUrl;
+      if (c == null || String(c).trim() === "") {
+        body.coverPhotoUrl = null;
+      } else {
+        body.coverPhotoUrl = String(c).trim();
+      }
+    }
     if (Object.keys(body).length === 0) {
       throw new Error("Nothing to update.");
     }
@@ -1212,17 +1553,72 @@ export const chatApi = {
     });
     const d = response.data;
     if (d && typeof d === "object" && Object.keys(d as object).length > 0) {
-      return mapMyUserProfileFromDto(d as Record<string, unknown>);
+      return mapMyUserProfileFromJson(d as Record<string, unknown>);
     }
     const again = await backendApi.get("/api/users/me", { headers: authHeaders(token) });
-    return mapMyUserProfileFromDto((again.data ?? {}) as Record<string, unknown>);
+    return mapMyUserProfileFromJson((again.data ?? {}) as Record<string, unknown>);
+  },
+
+  /**
+   * User profile controller: `PUT /api/user/profile/update`
+   * `multipart/form-data`: `bio`, `theme`, optional `displayName`, and `coverImage` (file, URL string, or empty to clear).
+   */
+  async updateUserProfileCover(
+    token: string,
+    opts: {
+      bio: string;
+      theme: string;
+      coverImageUrl?: string | null;
+      file?: File;
+      displayName?: string;
+    }
+  ): Promise<MyUserProfile> {
+    const coverPayload: string | File =
+      opts.file ??
+      (opts.coverImageUrl != null && String(opts.coverImageUrl).trim() !== ""
+        ? String(opts.coverImageUrl).trim()
+        : "");
+    const { ok, status, bodyText } = await putUserProfileCoverUpdate(CHAT_BACKEND_ORIGIN, token, {
+      bio: opts.bio ?? "",
+      theme: opts.theme ?? "light",
+      coverImage: coverPayload,
+      displayName: opts.displayName,
+    });
+    if (!ok) {
+      throw new Error(bodyText.trim() || `Profile cover update failed (${status})`);
+    }
+    const mapped = mapMyProfileFromUserProfilePutBody(bodyText);
+    if (mapped) return mapped;
+    return chatApi.getMyProfile(token);
+  },
+
+  /**
+   * Settings save when the user picked a new cover: one `PUT` with `FormData` (`bio`, `theme`, `displayName`, `coverImage` file).
+   * Does not set `Content-Type` (browser sets multipart boundary).
+   */
+  async saveProfileCoverWithUpload(
+    token: string,
+    fields: { displayName: string; bio: string; theme: "light" | "dark"; file: File }
+  ): Promise<MyUserProfile> {
+    const { ok, status, bodyText } = await putUserProfileCoverUpdate(CHAT_BACKEND_ORIGIN, token, {
+      bio: fields.bio,
+      theme: fields.theme,
+      coverImage: fields.file,
+      displayName: fields.displayName,
+    });
+    if (!ok) {
+      throw new Error(bodyText.trim() || `Profile update failed (${status})`);
+    }
+    const mapped = mapMyProfileFromUserProfilePutBody(bodyText);
+    if (mapped) return mapped;
+    return chatApi.getMyProfile(token);
   },
 
   /** Upload a profile image via `POST /api/uploads` (same as other media). Returns absolute URL. */
   async uploadProfileImageWithFetch(token: string, file: File): Promise<string> {
     const form = new FormData();
     form.append("file", file, file.name || "profile.jpg");
-    const res = await fetch(`${CHAT_BACKEND_ORIGIN}/api/uploads`, {
+    const res = await fetch(resolveChatBackendFetchUrl(CHAT_BACKEND_ORIGIN, "/api/uploads"), {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: form,
@@ -1231,17 +1627,7 @@ export const chatApi = {
       throw new Error(`Profile image upload failed (${res.status})`);
     }
     const uploadBody = (await res.json()) as Record<string, unknown>;
-    const uploadedUrlRaw =
-      uploadBody.url ??
-      uploadBody.fileUrl ??
-      uploadBody.mediaUrl ??
-      uploadBody.path ??
-      uploadBody.location ??
-      uploadBody.data;
-    const uploadedUrl =
-      typeof uploadedUrlRaw === "string" && uploadedUrlRaw.trim().length > 0
-        ? uploadedUrlRaw.trim()
-        : "";
+    const uploadedUrl = extractUploadUrlFromResponse(uploadBody);
     if (!uploadedUrl) throw new Error("Profile upload: missing URL in response");
     return toAbsoluteBackendUrl(uploadedUrl) ?? uploadedUrl;
   },
@@ -1385,7 +1771,7 @@ export const chatApi = {
     token: string,
     postId: string,
     emoji: string
-  ): Promise<{ reactionCount: number; myReaction: string | null }> {
+  ): Promise<{ reactionCount: number; myReaction: string | null; reactionSummary?: Record<string, number> }> {
     const response = await backendApi.post(
       `/api/posts/${encodeURIComponent(String(postId).trim())}/react`,
       { emoji: emoji.trim() },
@@ -1412,9 +1798,15 @@ export const chatApi = {
         : typeof mapped.myReaction === "string" && mapped.myReaction.trim()
           ? mapped.myReaction.trim()
           : emoji;
+    const reactionSummary = mapReactionSummaryFromDto(inner) ?? mapReactionSummaryFromDto(raw);
     return {
       reactionCount,
       myReaction: myReaction || null,
+      ...(mapped.reactionSummary
+        ? { reactionSummary: mapped.reactionSummary }
+        : reactionSummary
+          ? { reactionSummary }
+          : {}),
     };
   },
 
@@ -1611,17 +2003,7 @@ export const chatApi = {
       },
     });
     const uploadBody = (upload.data ?? {}) as Record<string, unknown>;
-    const uploadedUrlRaw =
-      uploadBody.url ??
-      uploadBody.fileUrl ??
-      uploadBody.mediaUrl ??
-      uploadBody.path ??
-      uploadBody.location ??
-      uploadBody.data;
-    const uploadedUrl =
-      typeof uploadedUrlRaw === "string" && uploadedUrlRaw.trim().length > 0
-        ? uploadedUrlRaw.trim()
-        : "";
+    const uploadedUrl = extractUploadUrlFromResponse(uploadBody);
     if (!uploadedUrl) return null;
     const absoluteUrl = toAbsoluteBackendUrl(uploadedUrl) ?? uploadedUrl;
 
@@ -1651,7 +2033,7 @@ export const chatApi = {
   ): Promise<string> {
     const form = new FormData();
     form.append("file", blob, filename);
-    const res = await fetch(`${CHAT_BACKEND_ORIGIN}/api/uploads`, {
+    const res = await fetch(resolveChatBackendFetchUrl(CHAT_BACKEND_ORIGIN, "/api/uploads"), {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: form,
@@ -1660,17 +2042,7 @@ export const chatApi = {
       throw new Error(`Voice upload failed (${res.status})`);
     }
     const uploadBody = (await res.json()) as Record<string, unknown>;
-    const uploadedUrlRaw =
-      uploadBody.url ??
-      uploadBody.fileUrl ??
-      uploadBody.mediaUrl ??
-      uploadBody.path ??
-      uploadBody.location ??
-      uploadBody.data;
-    const uploadedUrl =
-      typeof uploadedUrlRaw === "string" && uploadedUrlRaw.trim().length > 0
-        ? uploadedUrlRaw.trim()
-        : "";
+    const uploadedUrl = extractUploadUrlFromResponse(uploadBody);
     if (!uploadedUrl) throw new Error("Voice upload: missing URL in response");
     return toAbsoluteBackendUrl(uploadedUrl) ?? uploadedUrl;
   },
@@ -1956,6 +2328,226 @@ export const chatApi = {
       if (Array.isArray(v)) out[k] = v.map((x) => String(x));
     }
     return out;
+  },
+
+  /**
+   * FriendshipController: `GET /api/friendships/incoming`.
+   */
+  async getIncomingFriendRequests(token: string): Promise<IncomingFriendRequest[]> {
+    const response = await backendApi.get("/api/friendships/incoming", {
+      headers: authHeaders(token),
+    });
+    const rows = unwrapList(response.data, ["data", "content", "items", "requests", "friendships"]);
+    return rows
+      .map((raw) => {
+        if (!raw || typeof raw !== "object") return null;
+        const v = raw as Record<string, unknown>;
+        const idRaw = v.id ?? v.requestId ?? v.friendshipId;
+        const requesterIdRaw = v.requesterId ?? v.senderId ?? v.fromUserId ?? v.userId;
+        const requesterUsername = firstNonEmptyString(
+          v.requesterUsername,
+          v.requesterUserName,
+          v.requesterName,
+          v.requesterDisplayName,
+          v.username
+        );
+        if (idRaw == null || requesterIdRaw == null || !requesterUsername) return null;
+        const avatarRaw = firstNonEmptyString(
+          v.requesterAvatarUrl,
+          v.requester_avatar_url,
+          v.avatarUrl,
+          v.avatar_url
+        );
+        return {
+          id: String(idRaw),
+          requesterId: String(requesterIdRaw),
+          requesterUsername,
+          requesterDisplayName:
+            firstNonEmptyString(v.requesterDisplayName, v.requester_display_name) ?? null,
+          requesterAvatarUrl: avatarRaw ? toAbsoluteBackendUrl(avatarRaw) ?? avatarRaw : null,
+          createdAt: firstNonEmptyString(v.createdAt, v.created_at),
+        } as IncomingFriendRequest;
+      })
+      .filter((x): x is IncomingFriendRequest => x != null);
+  },
+
+  /**
+   * All peer user ids from `GET /api/friendships` rows that involve the signed-in user
+   * (any active row: pending, incoming, or accepted). Use to filter friend-discovery suggestions
+   * until `GET /api/users` excludes them server-side.
+   */
+  async listFriendshipPeerUserIds(token: string): Promise<string[]> {
+    const meRaw = viewerUserIdFromToken(token);
+    if (!meRaw) return [];
+    const me = String(meRaw);
+    try {
+      const rows = await getFriendshipRowsCached(token);
+      const peers = new Set<string>();
+      for (const raw of rows) {
+        if (!raw || typeof raw !== "object") continue;
+        const v = raw as Record<string, unknown>;
+        const ids = friendshipRowUserIds(v);
+        if (!ids.some((id) => String(id) === me)) continue;
+        for (const id of ids) {
+          const sid = String(id).trim();
+          if (sid && sid !== me) peers.add(sid);
+        }
+      }
+      return Array.from(peers);
+    } catch {
+      return [];
+    }
+  },
+
+  /**
+   * FriendshipController: `GET /api/friendships` — resolve status for one peer.
+   */
+  async getFriendshipStatus(token: string, targetUserId: string): Promise<FriendshipSnapshot> {
+    const me = viewerUserIdFromToken(token);
+    const want = targetUserId.trim();
+    try {
+      const rows = await getFriendshipRowsCached(token);
+      const want = targetUserId.trim();
+      const meStr = me?.trim() ?? "";
+      const matches = rows.filter((raw) => {
+        if (!raw || typeof raw !== "object") return false;
+        const v = raw as Record<string, unknown>;
+        return friendshipRowUserIds(v).some((id) => String(id) === String(want));
+      });
+      const match =
+        (meStr.length > 0 &&
+          matches.find((raw) => {
+            const v = raw as Record<string, unknown>;
+            return friendshipRowUserIds(v).some((id) => String(id) === meStr);
+          })) ??
+        matches[0];
+      if (match) {
+        return parseFriendshipSnapshotForPeer(match, me, want);
+      }
+    } catch {
+      /* fallback below */
+    }
+
+    // const tries: Array<() => Promise<{ data: unknown }>> = [
+    //   () => backendApi.get(`/api/friendships/with/${uid}`, { headers: authHeaders(token) }),
+    //   () => backendApi.get(`/api/friends/status/${uid}`, { headers: authHeaders(token) }),
+    //   () =>
+    //     backendApi.get(`/api/friends/status`, {
+    //       params: { userId: targetUserId },
+    //       headers: authHeaders(token),
+    //     }),
+    //   () => backendApi.get(`/api/users/${uid}/friendship`, { headers: authHeaders(token) }),
+    // ];
+    // for (const t of tries) {
+    //   try {
+    //     const r = await t();
+    //     const snap = parseFriendshipBody(r.data);
+    //     if (snap.status != null) return snap;
+    //   } catch {
+    //     /* try next */
+    //   }
+    // }
+    return { status: null };
+  },
+
+  /**
+   * `POST /api/friendships` (FriendshipController).
+   * HTTP **409 Conflict** is rethrown so the UI can treat it (e.g. remove from suggestions, reconcile status).
+   */
+  async sendFriendRequest(token: string, targetUserId: string): Promise<FriendshipSnapshot> {
+    clearFriendshipRowsCache(token);
+    const headers = authHeaders(token);
+    const rid = targetUserId.trim();
+    const receiverNum = /^\d+$/.test(rid) ? Number(rid) : null;
+    const bodies: Record<string, unknown>[] = [];
+    if (receiverNum != null) bodies.push({ receiverId: receiverNum });
+    bodies.push({ receiverId: rid });
+    const seen = new Set<string>();
+    const uniqueBodies = bodies.filter((b) => {
+      const key = JSON.stringify(b);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    let lastErr: unknown;
+    for (const body of uniqueBodies) {
+      try {
+        const r = await backendApi.post("/api/friendships", body, { headers });
+        return parseFriendshipSnapshotForPeer(r.data, viewerUserIdFromToken(token), rid);
+      } catch (e) {
+        lastErr = e;
+        if (!axios.isAxiosError(e) || e.response == null) {
+          continue;
+        }
+        const st = e.response.status;
+        /** Let callers handle 409 (e.g. remove from suggestions, reconcile UI). */
+        if (st === 409) {
+          throw e;
+        }
+        if (st === 401 || st === 403) {
+          throw e;
+        }
+        if (st >= 500) {
+          throw e;
+        }
+        /* 400: try next body shape; 404: unlikely for POST same path */
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error("Could not send friend request.");
+  },
+
+  /**
+   * Withdraw outgoing pending request: `DELETE /api/friendships/{id}` (friendship row id).
+   * Confirm with your backend if delete uses the same `{id}` as list/incoming rows.
+   */
+  async cancelFriendRequest(token: string, requestId: string, _targetUserId: string): Promise<void> {
+    const ridRaw = requestId.trim();
+    if (!ridRaw) {
+      throw new Error("Missing friendship id to cancel.");
+    }
+    const rid = encodeURIComponent(ridRaw);
+    await backendApi.delete(`/api/friendships/${rid}`, { headers: authHeaders(token) });
+    clearFriendshipRowsCache(token);
+  },
+
+  /**
+   * FriendshipController: `POST /api/friendships/{id}/accept`.
+   */
+  async acceptFriendRequest(
+    token: string,
+    requestId: string,
+    _targetUserId?: string
+  ): Promise<FriendshipSnapshot> {
+    const ridRaw = requestId.trim();
+    if (!ridRaw) {
+      throw new Error("Missing friendship id to accept.");
+    }
+    const rid = encodeURIComponent(ridRaw);
+    const r = await backendApi.post(`/api/friendships/${rid}/accept`, {}, { headers: authHeaders(token) });
+    clearFriendshipRowsCache(token);
+    return parseFriendshipBody(r.data);
+  },
+
+  /**
+   * Reject an incoming request: `DELETE /api/friendships/{id}` (same resource as list/incoming rows).
+   * Not listed separately on your controller; adjust if your API uses a dedicated decline route.
+   */
+  async declineFriendRequest(token: string, requestId: string, _targetUserId?: string): Promise<void> {
+    const ridRaw = requestId.trim();
+    if (!ridRaw) {
+      throw new Error("Missing friendship id to decline.");
+    }
+    const rid = encodeURIComponent(ridRaw);
+    await backendApi.delete(`/api/friendships/${rid}`, { headers: authHeaders(token) });
+    clearFriendshipRowsCache(token);
+  },
+
+  /** End friendship / remove connection by peer user id (resource shape varies by backend). */
+  async removeFriend(token: string, targetUserId: string): Promise<void> {
+    const uid = encodeURIComponent(targetUserId.trim());
+    await backendApi.delete(`/api/friendships/${uid}`, { headers: authHeaders(token) });
+    clearFriendshipRowsCache(token);
   },
 };
 

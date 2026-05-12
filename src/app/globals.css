@@ -10,8 +10,8 @@
   --text-main: #1e293b;
   /* Feed / profile composer (light) — align with messenger cards */
   --feed-surface: #ffffff;
-  --feed-muted: #f8fafc;
-  --feed-border: #e2e8f0;
+  --feed-muted: #f4f1eb;
+  --feed-border: #e8e6e1;
   --feed-placeholder: #64748b;
   /* “Own message” bubble (same role as blue bubbles in chat) */
   --feed-bubble-bg: #2563eb;
