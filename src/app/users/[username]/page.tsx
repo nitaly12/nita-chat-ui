@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { chatApi, parseJwtIdentity, readAxiosErrorMessage } from "@/chat/api";
+import { normalizeBackendTimestamp } from "@/chat/normalizeBackendTimestamp";
 import { avatarTone, toAbsoluteAvatarUrl } from "@/chat/chatPeerProfile";
 import CommentSection from "@/components/profile/CommentSection";
 import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
@@ -36,7 +37,8 @@ function mutualConnectionsCount(
 
 function formatPostDate(iso?: string): string {
   if (!iso?.trim()) return "";
-  const d = new Date(iso);
+  const normalized = normalizeBackendTimestamp(iso.trim()) ?? iso.trim();
+  const d = new Date(normalized);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toLocaleString();
 }

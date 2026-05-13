@@ -1,6 +1,7 @@
 import axios from "axios";
 import { chatDebug, isChatDebug } from "./chatDebug";
 import { extractUploadUrlFromResponse } from "./extractUploadUrl";
+import { normalizeBackendTimestamp } from "./normalizeBackendTimestamp";
 import { putUserProfileCoverUpdate, resolveChatBackendFetchUrl } from "./userProfileCoverHttp";
 import type {
   AuthResult,
@@ -241,7 +242,7 @@ const mapChat = (value: unknown): Chat => {
     lastMsgObj?.sentAt;
   const lastMessageAt =
     typeof lastMessageAtRaw === "string" && lastMessageAtRaw.length > 0
-      ? lastMessageAtRaw
+      ? (normalizeBackendTimestamp(lastMessageAtRaw) ?? lastMessageAtRaw)
       : undefined;
   const unreadRaw = v.unreadCount ?? v.unread ?? v.unreadMessages;
   const unreadCount =
@@ -770,7 +771,10 @@ const mapMessage = (value: unknown): ChatMessage => {
     parentMessage,
     type: messageType,
     content: voiceFromJson != null && mediaUrl ? "" : content,
-    createdAt: String(v.createdAt ?? v.timestamp ?? new Date().toISOString()),
+    createdAt: (() => {
+      const raw = String(v.createdAt ?? v.timestamp ?? new Date().toISOString());
+      return normalizeBackendTimestamp(raw) ?? raw;
+    })(),
     readAt,
     seen,
     seenBy: readBy.length > 0 ? [...readBy] : undefined,
@@ -973,7 +977,10 @@ export function mapPostComment(value: unknown): PostComment {
     (typeof a?.id !== "undefined" ? a.id : undefined) ??
     (typeof a?.userId !== "undefined" ? a.userId : undefined) ??
     (typeof a?.user_id !== "undefined" ? a.user_id : undefined);
-  const createdAt = firstNonEmptyString(v.createdAt, v.created_at, v.timestamp);
+  const createdAtRaw = firstNonEmptyString(v.createdAt, v.created_at, v.timestamp);
+  const createdAt = createdAtRaw
+    ? (normalizeBackendTimestamp(createdAtRaw) ?? createdAtRaw)
+    : undefined;
   const parentRaw =
     v.parentCommentId ??
     v.parent_comment_id ??
@@ -2376,6 +2383,7 @@ export const chatApi = {
           v.avatarUrl,
           v.avatar_url
         );
+        const createdAtFriend = firstNonEmptyString(v.createdAt, v.created_at);
         return {
           id: String(idRaw),
           requesterId: String(requesterIdRaw),
@@ -2383,7 +2391,9 @@ export const chatApi = {
           requesterDisplayName:
             firstNonEmptyString(v.requesterDisplayName, v.requester_display_name) ?? null,
           requesterAvatarUrl: avatarRaw ? toAbsoluteBackendUrl(avatarRaw) ?? avatarRaw : null,
-          createdAt: firstNonEmptyString(v.createdAt, v.created_at),
+          createdAt: createdAtFriend
+            ? (normalizeBackendTimestamp(createdAtFriend) ?? createdAtFriend)
+            : undefined,
         } as IncomingFriendRequest;
       })
       .filter((x): x is IncomingFriendRequest => x != null);

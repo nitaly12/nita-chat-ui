@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { chatApi, parseJwtIdentity, readAxiosErrorMessage } from "@/chat/api";
+import { normalizeBackendTimestamp } from "@/chat/normalizeBackendTimestamp";
 import type { PostComment, UserPost, UserSummary } from "@/chat/types";
 import CreatePostCard from "./CreatePostCard";
 import PostInteractionBar from "./PostInteractionBar";
@@ -32,8 +33,10 @@ type FeedPost = UserPost & {
 const EMPTY_USERS: UserSummary[] = [];
 
 function postRelativeLabel(iso?: string): string {
-  if (!iso?.trim()) return "";
-  const d = new Date(iso);
+  const raw = iso?.trim();
+  if (!raw) return "";
+  const normalized = normalizeBackendTimestamp(raw) ?? raw;
+  const d = new Date(normalized);
   if (Number.isNaN(d.getTime())) return "";
   const diff = Date.now() - d.getTime();
   const m = Math.floor(diff / 60000);
@@ -175,8 +178,12 @@ export default function MyProfileFeed({
           // Keep non-mine rows and refresh mine rows.
           const others = prev.filter((p) => !p.mine);
           const merged = [...nextMine, ...others].sort((a, b) => {
-            const at = a.createdAt ? Date.parse(a.createdAt) : 0;
-            const bt = b.createdAt ? Date.parse(b.createdAt) : 0;
+            const at = a.createdAt
+              ? Date.parse(normalizeBackendTimestamp(a.createdAt) ?? a.createdAt)
+              : 0;
+            const bt = b.createdAt
+              ? Date.parse(normalizeBackendTimestamp(b.createdAt) ?? b.createdAt)
+              : 0;
             return bt - at;
           });
           for (const p of merged) {

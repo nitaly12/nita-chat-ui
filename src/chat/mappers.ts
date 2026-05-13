@@ -1,9 +1,5 @@
 import type { Chat, ChatMember, ChatMessage } from "./types";
-
-const TZ_SUFFIX = /([zZ]|[+-]\d{2}:?\d{2})$/;
-/** Treat backend timestamps without a TZ suffix as UTC (Spring `LocalDateTime` ships no zone). */
-const normalizeTimestamp = (raw: string): string =>
-  TZ_SUFFIX.test(raw) ? raw : `${raw}Z`;
+import { normalizeBackendTimestamp } from "./normalizeBackendTimestamp";
 
 export const toChat = (value: unknown): Chat => {
   const record = (value ?? {}) as Record<string, unknown>;
@@ -140,7 +136,7 @@ export const toMessage = (value: unknown): ChatMessage => {
 
   const createdAt =
     typeof createdAtCandidate === "string" && createdAtCandidate.length > 0
-      ? normalizeTimestamp(createdAtCandidate)
+      ? normalizeBackendTimestamp(createdAtCandidate) ?? createdAtCandidate
       : new Date().toISOString();
 
   return {
