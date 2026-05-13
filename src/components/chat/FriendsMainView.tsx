@@ -70,6 +70,29 @@ export default function FriendsMainView({
   const [incoming, setIncoming] = useState<IncomingFriendRequest[]>([]);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [exitingSuggestionIds, setExitingSuggestionIds] = useState(() => new Set<string>());
+  const [suggestionAddsCompleted, setSuggestionAddsCompleted] = useState(0);
+
+  const SUGGEST_CARD_EXIT_MS = 320;
+
+  const handleSuggestionAddSuccess = useCallback(
+    async (userId: string) => {
+      const id = userId.trim();
+      if (!id) return;
+      setExitingSuggestionIds((prev) => new Set(prev).add(id));
+      await new Promise<void>((resolve) => {
+        window.setTimeout(resolve, SUGGEST_CARD_EXIT_MS);
+      });
+      hideUserFromSuggestions(id);
+      setExitingSuggestionIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+      setSuggestionAddsCompleted((c) => c + 1);
+    },
+    [hideUserFromSuggestions]
+  );
 
   const onSuggestionSnapshot = useCallback(
     (userId: string, snap: FriendshipSnapshot) => {
@@ -209,7 +232,9 @@ export default function FriendsMainView({
             Suggested connections
           </h2>
           {suggested.length === 0 ? (
-            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">No suggestions yet.</p>
+            <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
+              {suggestionAddsCompleted > 0 ? "No more suggestions." : "No suggestions yet."}
+            </p>
           ) : (
             <ul className="mt-5 grid list-none grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
               {suggested.map((u) => {
@@ -246,7 +271,11 @@ export default function FriendsMainView({
                 return (
                   <li
                     key={u.id}
-                    className="flex flex-col rounded-2xl bg-white p-4 pt-5 shadow-[0_2px_8px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/[0.05] dark:bg-slate-900 dark:ring-white/10 dark:shadow-none"
+                    className={`flex flex-col rounded-2xl bg-white p-4 pt-5 shadow-[0_2px_8px_rgba(15,23,42,0.06)] ring-1 ring-slate-900/[0.05] transition-[opacity,transform] duration-300 ease-out motion-reduce:transition-none dark:bg-slate-900 dark:ring-white/10 dark:shadow-none ${
+                      exitingSuggestionIds.has(u.id)
+                        ? "pointer-events-none scale-[0.96] opacity-0"
+                        : "scale-100 opacity-100"
+                    }`}
                   >
                     <div className="flex flex-1 flex-col items-center text-center">
                       {href ? (
@@ -273,6 +302,7 @@ export default function FriendsMainView({
                         layout="card"
                         suggestionList
                         onSnapshotChange={onSuggestionSnapshot}
+                        onSuggestionAddSuccess={handleSuggestionAddSuccess}
                       />
                     </div>
                   </li>

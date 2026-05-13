@@ -6,6 +6,7 @@ import { chatApi, parseJwtIdentity, readAxiosErrorMessage } from "@/chat/api";
 import { normalizeBackendTimestamp } from "@/chat/normalizeBackendTimestamp";
 import type { PostComment, UserPost, UserSummary } from "@/chat/types";
 import CreatePostCard from "./CreatePostCard";
+import StoryTray from "./StoryTray";
 import PostInteractionBar from "./PostInteractionBar";
 import CommentSection from "./CommentSection";
 import { PostContentWithHashtags } from "./postContentRich";
@@ -288,6 +289,11 @@ export default function MyProfileFeed({
 
   return (
     <section className={`w-full space-y-3 ${className}`}>
+      <StoryTray
+        token={token}
+        currentUserId={currentUserId}
+        viewerAvatarUrl={viewerAvatarUrl}
+      />
       <CreatePostCard
         token={token}
         onPosted={() => void loadPosts()}

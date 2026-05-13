@@ -724,8 +724,17 @@ export default function ChatApp() {
   };
 
   if (!token) {
+    const isLogin = authMode === "login";
     return (
-      <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#dde8e0] via-[#ebe4dc] to-[#d8e4f0] p-4">
+      <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#f6f7f9] px-4 py-10">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -top-32 -left-32 h-80 w-80 rounded-full bg-[#c8dccd] opacity-60 blur-3xl"
+        />
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -bottom-32 -right-32 h-96 w-96 rounded-full bg-[#dbe4ef] opacity-60 blur-3xl"
+        />
         <TopAlert
           key={authToastPreview ?? "auth-toast-empty"}
           open={Boolean(authToastPreview)}
@@ -736,81 +745,134 @@ export default function ChatApp() {
           onClick={() => setAuthToastPreview(null)}
           durationMs={4500}
         />
-        <div className="w-full max-w-sm rounded-3xl border border-[#b8c9bc]/70 bg-[#faf8f3]/95 p-6 shadow-[0_20px_50px_-12px_rgba(60,80,70,0.18)] backdrop-blur-sm sm:p-8">
-          <h1 className="font-serif text-xl font-semibold tracking-tight text-[#2c3d33] sm:text-2xl">
-            {authMode === "login" ? "Sign in" : "Create account"}
-          </h1>
-          <div className="mt-5 space-y-3">
-            <input
-              className="w-full rounded-2xl border border-[#b8c9bc] bg-[#fefcf8] px-4 py-3 text-sm text-[#2c3d33] outline-none placeholder:text-[#7a8f82] focus:border-[#7d9b84] focus:ring-2 focus:ring-[#7d9b84]/35"
-              placeholder="Username"
-              value={usernameInput}
-              onChange={(e) => setUsernameInput(e.target.value)}
-              autoComplete="username"
-            />
-            {authMode === "register" ? (
-              <input
-                className="w-full rounded-2xl border border-[#b8c9bc] bg-[#fefcf8] px-4 py-3 text-sm text-[#2c3d33] outline-none placeholder:text-[#7a8f82] focus:border-[#7d9b84] focus:ring-2 focus:ring-[#7d9b84]/35"
-                type="email"
-                placeholder="Email"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                autoComplete="email"
-              />
-            ) : null}
-            <div className="relative">
-              <input
-                className="w-full rounded-2xl border border-[#b8c9bc] bg-[#fefcf8] px-4 py-3 pr-12 text-sm text-[#2c3d33] outline-none placeholder:text-[#7a8f82] focus:border-[#7d9b84] focus:ring-2 focus:ring-[#7d9b84]/35"
-                type={passwordVisible ? "text" : "password"}
-                placeholder="Password"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
-                autoComplete={authMode === "login" ? "current-password" : "new-password"}
-              />
-              <button
-                type="button"
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-xl px-2 py-1 text-sm text-[#4a6b7d] hover:bg-[#efeadf] focus:outline-none focus:ring-2 focus:ring-[#7d9b84]/35"
-                aria-label={passwordVisible ? "Hide password" : "Show password"}
-                onClick={() => setPasswordVisible((v) => !v)}
-              >
-                {passwordVisible ? "🙈" : "👁"}
-              </button>
-            </div>
-            {statusMessage && (
-              <p
-                className={`text-sm ${
-                  statusTone === "success" ? "text-emerald-700" : "text-red-700"
-                }`}
-              >
-                {statusMessage}
-              </p>
-            )}
-            <button
-              className="w-full rounded-2xl bg-[#7d9b84] py-3.5 text-sm font-semibold text-white shadow-md shadow-[#5a7a62]/25 hover:bg-[#6d8a74]"
-              type="button"
-              onClick={() => void handleAuth()}
-            >
-              {authMode === "login" ? "Sign in" : "Create account"}
-            </button>
-            {authMode === "login" ? (
-              <div className="text-center">
-                <Link
-                  href="/forgot-password"
-                  className="text-sm font-medium text-[#4a6b7d] underline decoration-[#4a6b7d]/30 underline-offset-4 hover:text-[#3d5a6a]"
-                >
-                  Forgot password?
-                </Link>
+        <div className="relative w-full max-w-md">
+          <div className="rounded-2xl border border-black/5 bg-white p-8 shadow-[0_20px_60px_-20px_rgba(15,23,42,0.18)] sm:p-10">
+            <div className="mb-8 flex items-center gap-3">
+              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#2c3d33] text-base font-semibold text-white">
+                M
+              </span>
+              <div>
+                <h1 className="text-xl font-semibold tracking-tight text-[#0f172a]">
+                  {isLogin ? "Welcome back" : "Create your account"}
+                </h1>
+                <p className="mt-0.5 text-sm text-slate-500">
+                  {isLogin ? "Sign in to continue to your chats." : "Get started in seconds."}
+                </p>
               </div>
-            ) : null}
-            <button
-              className="w-full text-sm font-medium text-[#4a5c52] underline decoration-[#4a5c52]/30 underline-offset-4"
-              type="button"
-              onClick={() =>
-                setAuthMode((prev) => (prev === "login" ? "register" : "login"))
-              }
-            >
-              {authMode === "login" ? "Need an account? Register" : "Already have an account?"}
-            </button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label htmlFor="auth-username" className="block text-xs font-medium text-slate-600">
+                  Username
+                </label>
+                <input
+                  id="auth-username"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#7d9b84] focus:ring-4 focus:ring-[#7d9b84]/15"
+                  placeholder="yourname"
+                  value={usernameInput}
+                  onChange={(e) => setUsernameInput(e.target.value)}
+                  autoComplete="username"
+                />
+              </div>
+
+              {!isLogin ? (
+                <div className="space-y-1.5">
+                  <label htmlFor="auth-email" className="block text-xs font-medium text-slate-600">
+                    Email
+                  </label>
+                  <input
+                    id="auth-email"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#7d9b84] focus:ring-4 focus:ring-[#7d9b84]/15"
+                    type="email"
+                    placeholder="you@example.com"
+                    value={emailInput}
+                    onChange={(e) => setEmailInput(e.target.value)}
+                    autoComplete="email"
+                  />
+                </div>
+              ) : null}
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="auth-password" className="block text-xs font-medium text-slate-600">
+                    Password
+                  </label>
+                  {isLogin ? (
+                    <Link
+                      href="/forgot-password"
+                      className="text-xs font-medium text-[#4a6b7d] hover:text-[#2c3d33]"
+                    >
+                      Forgot?
+                    </Link>
+                  ) : null}
+                </div>
+                <div className="relative">
+                  <input
+                    id="auth-password"
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 pr-11 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-[#7d9b84] focus:ring-4 focus:ring-[#7d9b84]/15"
+                    type={passwordVisible ? "text" : "password"}
+                    placeholder="••••••••"
+                    value={passwordInput}
+                    onChange={(e) => setPasswordInput(e.target.value)}
+                    autoComplete={isLogin ? "current-password" : "new-password"}
+                  />
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 flex h-7 w-7 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#7d9b84]/30"
+                    aria-label={passwordVisible ? "Hide password" : "Show password"}
+                    onClick={() => setPasswordVisible((v) => !v)}
+                  >
+                    {passwordVisible ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                        <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+                        <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+                        <line x1="2" y1="2" x2="22" y2="22" />
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {statusMessage ? (
+                <p
+                  className={`rounded-md px-3 py-2 text-xs ${
+                    statusTone === "success"
+                      ? "bg-emerald-50 text-emerald-700"
+                      : "bg-red-50 text-red-700"
+                  }`}
+                >
+                  {statusMessage}
+                </p>
+              ) : null}
+
+              <button
+                className="mt-2 w-full rounded-lg bg-[#2c3d33] py-2.5 text-sm font-semibold text-white transition hover:bg-[#1e2b24] focus:outline-none focus:ring-4 focus:ring-[#2c3d33]/20 active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60"
+                type="button"
+                onClick={() => void handleAuth()}
+              >
+                {isLogin ? "Sign in" : "Create account"}
+              </button>
+
+              <div className="pt-2 text-center text-sm text-slate-500">
+                {isLogin ? "New here?" : "Already have an account?"}{" "}
+                <button
+                  type="button"
+                  className="font-semibold text-[#2c3d33] hover:underline"
+                  onClick={() =>
+                    setAuthMode((prev) => (prev === "login" ? "register" : "login"))
+                  }
+                >
+                  {isLogin ? "Create an account" : "Sign in"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -932,7 +994,7 @@ export default function ChatApp() {
             </button> */}
             <button
               type="button"
-              className="ml-1 flex max-w-[130px] items-center gap-2 rounded-xl border border-[#d7e2d9] bg-[#f7f4ec] px-2 py-1.5 text-left text-sm font-medium text-slate-700 hover:bg-[#efeadf] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 sm:max-w-[220px]"
+              className="ml-1 flex max-w-[130px] items-center gap-2 rounded-xl px-2 py-1.5 text-left text-sm font-medium text-slate-700 hover:bg-[#efeadf] dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700 sm:max-w-[220px]"
               title="Profile and settings"
               onClick={() => setShowProfileSettings(true)}
             >
@@ -951,9 +1013,6 @@ export default function ChatApp() {
                 </span>
               )}
               <span className="min-w-0 truncate max-[420px]:hidden">{profileDisplayName ?? currentUsername ?? "User"}</span>
-              <span className="shrink-0 text-slate-400" aria-hidden>
-                ▾
-              </span>
             </button>
           </div>
         </header>
@@ -981,9 +1040,6 @@ export default function ChatApp() {
             setExtraUnreadByRoom((p) => ({ ...p, [id]: 0 }));
             setActiveRoomId(id);
             setMainPane("chat");
-          }}
-          onLogout={() => {
-            forceLogout("");
           }}
         />
         </div>
@@ -1453,6 +1509,9 @@ export default function ChatApp() {
         onSaved={(p) => {
           onProfileSavedFromModal(p);
           void loadAppData();
+        }}
+        onLogout={() => {
+          forceLogout("");
         }}
       />
     </div>

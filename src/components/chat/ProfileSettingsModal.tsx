@@ -19,6 +19,8 @@ export type ProfileSettingsModalProps = {
   onClose: () => void;
   /** Fired after Save or after theme / photo changes that round-trip to the API (fresh profile). */
   onSaved?: (profile: MyUserProfile) => void;
+  /** Signs the user out and closes the modal. */
+  onLogout?: () => void;
 };
 
 type MenuKey = "notifications" | "security" | "language" | "deactivate" | null;
@@ -54,7 +56,7 @@ function ChevronRight({ className }: { className?: string }) {
  * using **`FormData`**: `bio`, `theme`, `displayName`, and file part **`coverImage`** (no manual `Content-Type`).
  * Other saves use `PUT /api/users/me` then optional cover clear via the same multipart endpoint.
  */
-export default function ProfileSettingsModal({ open, token, onClose, onSaved }: ProfileSettingsModalProps) {
+export default function ProfileSettingsModal({ open, token, onClose, onSaved, onLogout }: ProfileSettingsModalProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [displayName, setDisplayName] = useState("");
@@ -688,6 +690,37 @@ export default function ProfileSettingsModal({ open, token, onClose, onSaved }: 
                       </div>
                     ) : null}
                   </li>
+                  {onLogout ? (
+                    <li>
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 px-5 py-3.5 text-left text-sm font-semibold text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950/30"
+                        onClick={() => {
+                          onClose();
+                          onLogout();
+                        }}
+                      >
+                        <span className="inline-flex items-center gap-2.5">
+                          <svg
+                            width="18"
+                            height="18"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden
+                          >
+                            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                            <polyline points="16 17 21 12 16 7" />
+                            <line x1="21" y1="12" x2="9" y2="12" />
+                          </svg>
+                          Log out
+                        </span>
+                      </button>
+                    </li>
+                  ) : null}
                 </ul>
               </div>
           </div>

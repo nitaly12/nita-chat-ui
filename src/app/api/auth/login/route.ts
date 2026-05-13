@@ -1,11 +1,8 @@
 import axios from "axios";
 import { NextRequest, NextResponse } from "next/server";
+import { resolveAuthBackendBaseUrl } from "../backendBaseUrl";
 
-const BACKEND_BASE_URL = (
-  process.env.BACKEND_BASE_URL ??
-  process.env.NEXT_PUBLIC_SOCKET_URL ??
-  "http://localhost:8080"
-).replace(/\/+$/, "");
+const BACKEND_BASE_URL = resolveAuthBackendBaseUrl();
 
 const extractToken = (
   data: unknown,
@@ -73,9 +70,24 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ accessToken: token });
   } catch (err: unknown) {
     if (axios.isAxiosError(err) && err.response) {
-      return NextResponse.json(err.response.data ?? {}, {
-        status: err.response.status,
-      });
+      const status = err.response.status;
+      const upstream = err.response.data;
+      const base =
+        typeof upstream === "object" && upstream !== null && !Array.isArray(upstream)
+          ? (upstream as Record<string, unknown>)
+          : {};
+      if (status === 404) {
+        return NextResponse.json(
+          {
+            ...base,
+            message:
+              (typeof base.message === "string" && base.message.trim()) ||
+              `No login endpoint at ${BACKEND_BASE_URL}/api/auth/login. Start Spring on that host or set BACKEND_BASE_URL / NEXT_PUBLIC_API_BASE in .env.local.`,
+          },
+          { status: 404 }
+        );
+      }
+      return NextResponse.json(upstream ?? {}, { status });
     }
     return NextResponse.json(
       { message: "Login proxy failed" },

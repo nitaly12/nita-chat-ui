@@ -22,7 +22,6 @@ type ChatSidebarProps = {
   searchQuery?: string;
   onGoToFeed: () => void;
   onSelectRoom: (roomId: string) => void;
-  onLogout: () => void;
 };
 
 const relativeTime = (iso?: string): string => {
@@ -60,7 +59,6 @@ export default function ChatSidebar({
   searchQuery,
   onGoToFeed,
   onSelectRoom,
-  onLogout,
 }: ChatSidebarProps) {
   const normalizedQuery = (searchQuery ?? "").trim().toLowerCase();
   const filteredChats =
@@ -207,15 +205,6 @@ export default function ChatSidebar({
         ) : null}
       </div>
 
-      <div className="border-t border-slate-200 p-3 dark:border-slate-700">
-        <button
-          className="w-full rounded-xl bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800"
-          type="button"
-          onClick={onLogout}
-        >
-          Logout
-        </button>
-      </div>
     </aside>
   );
 }

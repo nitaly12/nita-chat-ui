@@ -22,6 +22,11 @@ export type FriendButtonProps = {
   /** Fired whenever friendship snapshot changes (load, add, cancel, accept, decline). */
   onSnapshotChange?: (userId: string, snapshot: FriendshipSnapshot) => void;
   /**
+   * After `sendFriendRequest` succeeds on suggestion cards: invoked before refresh so the parent
+   * can run exit animation, then call `hideUserFromSuggestions` when the card should leave the list.
+   */
+  onSuggestionAddSuccess?: (userId: string) => void | Promise<void>;
+  /**
    * Optional fallback when `suggestionList` is used outside `FriendshipUiProvider`
    * (normally `FriendshipUiContext` handles hide + sidebar refresh).
    */
@@ -36,6 +41,7 @@ export default function FriendButton({
   layout = "inline",
   suggestionList,
   onSnapshotChange,
+  onSuggestionAddSuccess,
   onSuggestionDismissed,
 }: FriendButtonProps) {
   const friendshipUi = useFriendshipUiOptional();
@@ -48,6 +54,8 @@ export default function FriendButton({
   onSnapshotChangeRef.current = onSnapshotChange;
   const onSuggestionDismissedRef = useRef(onSuggestionDismissed);
   onSuggestionDismissedRef.current = onSuggestionDismissed;
+  const onSuggestionAddSuccessRef = useRef(onSuggestionAddSuccess);
+  onSuggestionAddSuccessRef.current = onSuggestionAddSuccess;
 
   const applySnapshot = useCallback(
     (next: FriendshipSnapshot) => {
@@ -99,17 +107,17 @@ export default function FriendButton({
     const uid = targetUserId.trim();
     setBusy(true);
     setError(null);
-    let optimisticHidden = false;
-    if (suggestionList && friendshipUi) {
-      friendshipUi.hideUserFromSuggestions(uid);
-      optimisticHidden = true;
-    }
-    if (suggestionList) {
-      applySnapshot({ status: "PENDING" });
-    }
     try {
       if (suggestionList) {
         await chatApi.sendFriendRequest(token, uid);
+        applySnapshot({ status: "PENDING" });
+        setBusy(false);
+        const afterAdd = onSuggestionAddSuccessRef.current;
+        if (afterAdd) {
+          await afterAdd(uid);
+        } else if (friendshipUi) {
+          friendshipUi.hideUserFromSuggestions(uid);
+        }
         if (friendshipUi) {
           await friendshipUi.refreshAfterSocialChange();
         } else {
@@ -138,9 +146,6 @@ export default function FriendButton({
         }
         setError(null);
       } else {
-        if (suggestionList && optimisticHidden && friendshipUi) {
-          friendshipUi.unhideUserFromSuggestions(uid);
-        }
         if (suggestionList) {
           applySnapshot({ status: null });
         }
@@ -245,7 +250,7 @@ export default function FriendButton({
           onClick={() => void handleAddFriend()}
           className={isCard ? `${addBtnClass} py-2.5 text-sm` : addBtnClass}
         >
-          {busy && !suggestionList ? "…" : "Add Friend"}
+          {busy ? "…" : "Add Friend"}
         </button>
       ) : null}
 

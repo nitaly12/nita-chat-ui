@@ -1,11 +1,8 @@
 import axios from "axios";
 import { NextRequest, NextResponse } from "next/server";
+import { resolveAuthBackendBaseUrl } from "../backendBaseUrl";
 
-const BACKEND_BASE_URL = (
-  process.env.BACKEND_BASE_URL ??
-  process.env.NEXT_PUBLIC_SOCKET_URL ??
-  "http://localhost:8080"
-).replace(/\/+$/, "");
+const BACKEND_BASE_URL = resolveAuthBackendBaseUrl();
 
 /**
  * Proxies to Spring: POST /api/auth/verify-reset-otp

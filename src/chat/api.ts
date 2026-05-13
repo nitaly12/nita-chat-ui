@@ -12,6 +12,7 @@ import type {
   FriendshipSnapshot,
   MyUserProfile,
   PostComment,
+  Story,
   UserPost,
   UserSummary,
 } from "./types";
@@ -1426,6 +1427,58 @@ function parseFriendshipBody(v: unknown): FriendshipSnapshot {
   return { status: null };
 }
 
+const mapStory = (value: unknown): Story | null => {
+  const v = (value ?? {}) as Record<string, unknown>;
+  const idRaw = v.id ?? v.storyId ?? v.story_id;
+  const id = idRaw == null ? null : String(idRaw).trim();
+  if (!id) return null;
+  const ownerRaw = (v.user ?? v.owner ?? v.author ?? {}) as Record<string, unknown>;
+  const userIdRaw =
+    v.userId ?? v.user_id ?? v.ownerId ?? v.owner_id ?? v.authorId ?? ownerRaw.id;
+  const userId = userIdRaw == null ? null : String(userIdRaw).trim() || null;
+  const username =
+    firstNonEmptyString(v.username, v.user_name, ownerRaw.username, ownerRaw.user_name) ?? null;
+  const displayName =
+    firstNonEmptyString(
+      v.displayName,
+      v.display_name,
+      v.userDisplayName,
+      v.user_display_name,
+      ownerRaw.displayName,
+      ownerRaw.display_name
+    ) ?? null;
+  const avatarRaw = firstNonEmptyString(
+    v.userAvatarUrl,
+    v.user_avatar_url,
+    v.avatarUrl,
+    v.avatar_url,
+    v.profileImageUrl,
+    v.profile_image_url,
+    ownerRaw.avatarUrl,
+    ownerRaw.avatar_url
+  );
+  const userAvatarUrl = avatarRaw ? toAbsoluteBackendUrl(avatarRaw) ?? avatarRaw : null;
+  const mediaRaw = firstNonEmptyString(
+    v.mediaUrl,
+    v.media_url,
+    v.imageUrl,
+    v.image_url,
+    v.attachmentUrl,
+    v.attachment_url,
+    v.url
+  );
+  const mediaUrl = mediaRaw ? toAbsoluteBackendUrl(mediaRaw) ?? mediaRaw : null;
+  const createdAtRaw = firstNonEmptyString(
+    v.createdAt,
+    v.created_at,
+    v.postedAt,
+    v.posted_at,
+    v.timestamp
+  );
+  const createdAt = createdAtRaw ? normalizeBackendTimestamp(createdAtRaw) ?? createdAtRaw : null;
+  return { id, userId, username, displayName, userAvatarUrl, mediaUrl, createdAt };
+};
+
 export const chatApi = {
   async login(username: string, password: string): Promise<AuthResult> {
     const response = await webApi.post("/api/auth/login", { username, password });
@@ -1786,6 +1839,61 @@ export const chatApi = {
     await backendApi.delete(`/api/posts/${encodeURIComponent(postId)}`, {
       headers: authHeaders(token),
     });
+  },
+
+  /** StoryController: `GET /api/stories/feed` — story tray feed (typically friends only). */
+  async getStoriesFeed(token: string): Promise<Story[]> {
+    const response = await backendApi.get("/api/stories/feed", { headers: authHeaders(token) });
+    return unwrapList(response.data, ["stories", "content", "data", "results", "items"])
+      .map(mapStory)
+      .filter((s): s is Story => s !== null);
+  },
+
+  /** StoryController: `GET /api/stories/user/{id}` — every story authored by a specific user. */
+  async getStoriesByUserId(token: string, userId: string): Promise<Story[]> {
+    const id = encodeURIComponent(userId.trim());
+    if (!id) return [];
+    const response = await backendApi.get(`/api/stories/user/${id}`, {
+      headers: authHeaders(token),
+    });
+    return unwrapList(response.data, ["stories", "content", "data", "results", "items"])
+      .map(mapStory)
+      .filter((s): s is Story => s !== null);
+  },
+
+  /** StoryController: `DELETE /api/stories/{id}` — remove the caller's story. */
+  async deleteStory(token: string, storyId: string): Promise<void> {
+    const id = encodeURIComponent(storyId.trim());
+    if (!id) throw new Error("Missing story id.");
+    await backendApi.delete(`/api/stories/${id}`, { headers: authHeaders(token) });
+  },
+
+  /**
+   * StoryController: `POST /api/stories` — multipart upload (`file` part), like `/api/uploads`.
+   * Do NOT set `Content-Type` manually; the browser fills in the multipart boundary.
+   */
+  async createStory(
+    token: string,
+    body: { file: File; caption?: string }
+  ): Promise<Story | null> {
+    const form = new FormData();
+    form.append("file", body.file, body.file.name || "story.jpg");
+    if (body.caption) form.append("caption", body.caption);
+    const res = await fetch(
+      resolveChatBackendFetchUrl(CHAT_BACKEND_ORIGIN, "/api/stories"),
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: form,
+      }
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(text || `Story create failed (${res.status})`);
+    }
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    const inner = raw.data ?? raw.story;
+    return mapStory(inner && typeof inner === "object" ? inner : raw);
   },
 
   /**

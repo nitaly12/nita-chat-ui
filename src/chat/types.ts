@@ -154,3 +154,14 @@ export type MyUserProfile = {
   bio: string | null;
   theme: "light" | "dark";
 };
+
+/** StoryController: row returned from `GET /api/stories/feed` and `POST /api/stories`. */
+export type Story = {
+  id: string;
+  userId: string | null;
+  username: string | null;
+  displayName: string | null;
+  userAvatarUrl: string | null;
+  mediaUrl: string | null;
+  createdAt: string | null;
+};
