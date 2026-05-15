@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chatApi, parseJwtIdentity, readAxiosErrorMessage } from "@/chat/api";
 import type { Story } from "@/chat/types";
 import { getImageUrl } from "@/utils/getImageUrl";
+import { SafeRemoteImage } from "@/components/ui/SafeRemoteImage";
 import StoryEditorModal from "./StoryEditorModal";
 
 /**
@@ -320,10 +321,11 @@ export default function StoryTray({
                 aria-label={uploadBusy ? "Uploading story" : "Add a story"}
               >
                 {item.avatarSrc ? (
-                  <img
+                  <SafeRemoteImage
                     src={item.avatarSrc}
                     alt=""
                     className="absolute inset-0 h-full w-full object-cover opacity-90"
+                    variant="cover"
                   />
                 ) : (
                   <div className="absolute inset-0 bg-gradient-to-b from-slate-200 to-slate-100 dark:from-slate-700 dark:to-slate-800" />
@@ -430,7 +432,12 @@ export default function StoryTray({
           <div className="pointer-events-none absolute inset-x-0 top-8 z-30 mx-auto mt-1.5 flex w-[min(640px,92vw)] items-center gap-2 px-3 text-white">
             <span className="block h-8 w-8 overflow-hidden rounded-full border-2 border-white/80 bg-slate-700">
               {viewer.avatarSrc ? (
-                <img src={viewer.avatarSrc} alt="" className="h-full w-full object-cover" />
+                <SafeRemoteImage
+                  src={viewer.avatarSrc}
+                  alt=""
+                  className="h-full w-full object-cover"
+                  variant="avatar"
+                />
               ) : (
                 <span className="flex h-full w-full items-center justify-center text-xs font-bold">
                   {viewer.label.slice(0, 1).toUpperCase()}
@@ -488,10 +495,12 @@ export default function StoryTray({
             ×
           </button>
 
-          <img
+          <SafeRemoteImage
             src={currentStorySrc}
             alt=""
             className="max-h-[92vh] max-w-full rounded-2xl object-contain shadow-2xl"
+            variant="cover"
+            loading="eager"
           />
 
           <button
@@ -571,22 +580,7 @@ function StoryCard({ mediaSrc, userAvatarSrc, label, count, onClick }: StoryCard
 
       <div className="absolute inset-0 bg-gradient-to-t from-black/65 via-black/10 to-transparent" />
 
-      <span className="absolute left-2 top-2 block h-9 w-9 overflow-hidden rounded-full border-[3px] border-white bg-slate-200 shadow">
-        {userAvatarSrc ? (
-          <img
-            src={userAvatarSrc}
-            alt=""
-            className="h-full w-full object-cover"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
-          />
-        ) : (
-          <span className="flex h-full w-full items-center justify-center text-xs font-bold text-slate-700">
-            {initial}
-          </span>
-        )}
-      </span>
+      <CornerAvatar src={userAvatarSrc} initial={initial} />
 
       {count > 1 ? (
         <span
@@ -602,5 +596,29 @@ function StoryCard({ mediaSrc, userAvatarSrc, label, count, onClick }: StoryCard
         {label}
       </span>
     </button>
+  );
+}
+
+function CornerAvatar({ src, initial }: { src: string | undefined; initial: string }) {
+  const [broken, setBroken] = useState(false);
+  useEffect(() => {
+    setBroken(false);
+  }, [src]);
+  const showImage = src && !broken;
+  return (
+    <span className="absolute left-2 top-2 block h-9 w-9 overflow-hidden rounded-full border-[3px] border-white bg-slate-200 shadow">
+      {showImage ? (
+        <img
+          src={src}
+          alt=""
+          className="h-full w-full object-cover"
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        <span className="flex h-full w-full items-center justify-center text-xs font-bold text-slate-700">
+          {initial}
+        </span>
+      )}
+    </span>
   );
 }

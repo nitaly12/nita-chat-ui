@@ -7,6 +7,10 @@ import { toPublicBackendUrl } from "@/chat/api";
  * - Relative paths (e.g. `/uploads/...`) are prefixed with `process.env.REACT_APP_API_URL`
  *   when set (injected from `NEXT_PUBLIC_API_URL` / `NEXT_PUBLIC_API_BASE` in `next.config.ts`).
  * - Otherwise falls back to `toPublicBackendUrl` (same-origin `/backend` proxy in production).
+ *
+ * Available under two names — `getImageUrl` (legacy) and `getMediaUrl` (canonical).
+ * Pair this with `<SafeRemoteImage>` (or your own `onError`) to swap in the
+ * Ghibli-style placeholder when the image fails to load.
  */
 export function getImageUrl(path: string | null | undefined): string | undefined {
   if (path == null) return undefined;
@@ -26,3 +30,6 @@ export function getImageUrl(path: string | null | undefined): string | undefined
 
   return toPublicBackendUrl(p);
 }
+
+/** Canonical alias for {@link getImageUrl}. New callers should prefer this name. */
+export const getMediaUrl = getImageUrl;
